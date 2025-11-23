@@ -1,0 +1,17 @@
+{
+    "projects": [
+        {
+            "name": "Mind Map Visualizer",
+            "workspace_path": "/Users/shauryatiwari/Desktop/Agents Neural Mind map/workspace",
+            "reasoning_trace_path": "/Users/shauryatiwari/Desktop/Agents Neural Mind map/reasoning_trace.json",
+            "session_prefix": "mindmap"
+        },
+        {
+            "name": "My Other Project",
+            "workspace_path": "/path/to/your/other/project",
+            "reasoning_trace_path": "/path/to/your/other/project/reasoning_trace.json",
+            "session_prefix": "other"
+        }
+    ],
+    "active_project": 0
+}

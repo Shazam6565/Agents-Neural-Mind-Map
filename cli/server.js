@@ -214,7 +214,7 @@ console.log("✓ WebSocket server attached to port 3001");
 // WEBSOCKET LOGIC
 // ============================================
 
-const reasoningTracePath = path.join(__dirname, "../reasoning_trace.json");
+const reasoningTracePath = process.env.REASONING_TRACE_PATH || path.join(__dirname, "../reasoning_trace.json");
 console.log(`✓ Watching for reasoning traces at: ${reasoningTracePath}`);
 
 let processedSteps = new Set();
@@ -228,6 +228,12 @@ if (fs.existsSync(reasoningTracePath)) {
     } catch (e) {
         console.error("Error reading initial reasoning trace:", e);
     }
+}
+
+// Create reasoning trace file if it doesn't exist
+if (!fs.existsSync(reasoningTracePath)) {
+    console.log(`Creating empty reasoning trace file at: ${reasoningTracePath}`);
+    fs.writeFileSync(reasoningTracePath, '[]', 'utf8');
 }
 
 // Watch for changes
