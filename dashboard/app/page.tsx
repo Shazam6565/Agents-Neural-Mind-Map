@@ -10,6 +10,7 @@ export default function Home() {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<string>('IDLE');
 
   // Load session nodes when a session is selected
   const loadSessionNodes = useCallback(async (sessionId: string) => {
@@ -74,12 +75,53 @@ export default function Home() {
     return () => window.removeEventListener('refresh-sessions', handleRefresh);
   }, []);
 
+  // Listen for agent status changes via WebSocket
+  useEffect(() => {
+    // We need to access the socket instance. Since it's not globally available here, 
+    // we might need to rely on a global event or a context.
+    // For this phase, let's assume we can listen to a custom event dispatched by a global socket listener 
+    // or we can just poll/connect here. 
+    // Ideally, we should have a SocketContext. 
+    // But given the current structure, let's add a simple socket listener here or assume the socket is managed elsewhere.
+    // Wait, the previous code didn't have a socket connection in page.tsx. 
+    // Let's add a simple socket connection here for status updates.
+
+    // Dynamic import to avoid SSR issues with socket.io-client if needed, but standard import is usually fine in useEffect
+    const io = require('socket.io-client');
+    const socket = io('http://localhost:3001');
+
+    socket.on('connect', () => {
+      console.log('Dashboard connected to WebSocket');
+    });
+
+    socket.on('agent-event', (message: any) => {
+      if (message.event_type === 'status.changed') {
+        setAgentStatus(message.payload.status);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
   return (
     <div className="flex h-screen bg-[#0a0a0f] text-white overflow-hidden font-sans selection:bg-blue-500/30">
       {/* Background Gradient */}
       <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/20 via-gray-900/0 to-gray-900/0 pointer-events-none" />
 
-      <div className="relative z-10 flex h-full w-full">
+      {/* Status Banner */}
+      {agentStatus !== 'IDLE' && (
+        <div className={`fixed top-0 left-0 right-0 z-50 text-center py-1 text-xs font-bold tracking-wider uppercase
+            ${agentStatus === 'RUNNING' ? 'bg-green-500/80 text-white' : ''}
+            ${agentStatus === 'PAUSED' ? 'bg-yellow-500/80 text-black' : ''}
+            ${agentStatus === 'ROLLING_BACK' ? 'bg-red-500/80 text-white' : ''}
+        `}>
+          AGENT STATUS: {agentStatus}
+        </div>
+      )}
+
+      <div className="relative z-10 flex h-full w-full pt-4"> {/* Added pt-4 to account for banner if needed, or just let it overlay */}
         <SessionHistory
           onSelectSession={loadSessionNodes}
           currentSessionId={currentSessionId}

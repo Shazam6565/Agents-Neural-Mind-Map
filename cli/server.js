@@ -233,8 +233,8 @@ if (fs.existsSync(reasoningTracePath)) {
 // Watch for changes
 fs.watch(reasoningTracePath, (eventType) => {
     if (eventType === 'change') {
-        if (agentState.status === 'PAUSED' || agentState.status === 'ROLLING_BACK') {
-            console.log('Agent paused/rolling back, ignoring file changes');
+        if (agentState.status === 'PAUSED' || agentState.pauseRequested || agentState.status === 'ROLLING_BACK') {
+            console.log(`Agent status is ${agentState.status}, ignoring file changes`);
             return;
         }
 
@@ -429,6 +429,37 @@ io.on("connection", (socket) => {
         } catch (error) {
             console.error("Branch creation failed:", error);
             socket.emit('agent-event', WebSocketProtocol.createError(message, 'BRANCH_FAILED', error.message));
+        }
+    });
+
+    // Handle Pause Request
+    socket.on(WebSocketProtocol.EVENT_TYPES.PAUSE_REQUESTED, async (message) => {
+        console.log(`Received pause request:`, message);
+        try {
+            WebSocketProtocol.validate(message);
+            agentState.pauseRequested = true;
+            agentState.status = 'PAUSED';
+            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'PAUSED' }));
+        } catch (error) {
+            console.error("Pause failed:", error);
+        }
+    });
+
+    // Handle Resume Request
+    socket.on(WebSocketProtocol.EVENT_TYPES.RESUME_REQUESTED, async (message) => {
+        console.log(`Received resume request:`, message);
+        try {
+            WebSocketProtocol.validate(message);
+            agentState.pauseRequested = false;
+            agentState.status = 'RUNNING'; // Or IDLE depending on if there are steps? For now, assume running or idle will be handled by the loop.
+            // Actually, if we resume, we should probably check if there are pending steps or just set to IDLE if nothing is happening.
+            // But if we were paused mid-processing, we might want to resume processing.
+            // For this simple implementation, we'll just set status to IDLE (ready for new steps) or RUNNING if we were in the middle of something (not tracked deeply here yet).
+            // Let's just set to IDLE for now as the file watcher will pick up changes if any.
+            agentState.status = 'IDLE';
+            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'IDLE' }));
+        } catch (error) {
+            console.error("Resume failed:", error);
         }
     });
 

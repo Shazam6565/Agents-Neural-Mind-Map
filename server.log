@@ -1,0 +1,12 @@
+✓ WebSocket server attached to port 3001
+✓ Watching for reasoning traces at: /Users/shauryatiwari/Desktop/Agents Neural Mind map/reasoning_trace.json
+✓ API Server started on port 3001
+  Workspace Path: /Users/shauryatiwari/Desktop/Agents Neural Mind map/workspace
+  Available endpoints:
+    GET  /api/sessions
+    GET  /api/sessions/:id
+    GET  /api/sessions/:id/nodes
+Dashboard connected
+Dashboard connected
+Processing 1 new steps through LangGraph...
+Dashboard connected
