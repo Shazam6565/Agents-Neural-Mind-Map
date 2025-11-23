@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useMemo, useEffect } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -10,8 +10,12 @@ import ReactFlow, {
     useEdgesState,
     Connection,
     addEdge,
+    Position,
 } from 'reactflow';
+import dagre from 'dagre';
 import 'reactflow/dist/style.css';
+import CustomNode from './CustomNode';
+import { GitBranch, X, Play } from 'lucide-react';
 
 interface MindMapProps {
     currentSessionId: string | null;
@@ -21,15 +25,65 @@ interface MindMapProps {
     onEdgesChange: any;
 }
 
+const nodeTypes = {
+    custom: CustomNode,
+};
+
+const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+    const dagreGraph = new dagre.graphlib.Graph();
+    dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+    dagreGraph.setGraph({ rankdir: 'TB' });
+
+    nodes.forEach((node) => {
+        dagreGraph.setNode(node.id, { width: 250, height: 100 });
+    });
+
+    edges.forEach((edge) => {
+        dagreGraph.setEdge(edge.source, edge.target);
+    });
+
+    dagre.layout(dagreGraph);
+
+    const layoutedNodes = nodes.map((node) => {
+        const nodeWithPosition = dagreGraph.node(node.id);
+        node.targetPosition = Position.Top;
+        node.sourcePosition = Position.Bottom;
+
+        // We are shifting the dagre node position (anchor=center center) to the top left
+        // so it matches the React Flow node anchor point (top left).
+        node.position = {
+            x: nodeWithPosition.x - 125,
+            y: nodeWithPosition.y - 50,
+        };
+
+        return node;
+    });
+
+    return { nodes: layoutedNodes, edges };
+};
+
 export default function MindMap({
     currentSessionId,
-    nodes,
-    edges,
+    nodes: initialNodes,
+    edges: initialEdges,
     onNodesChange,
     onEdgesChange
 }: MindMapProps) {
 
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+    const [layoutedNodes, setLayoutedNodes] = useState<Node[]>([]);
+    const [layoutedEdges, setLayoutedEdges] = useState<Edge[]>([]);
+
+    // Apply layout whenever nodes or edges change
+    useEffect(() => {
+        const { nodes: lNodes, edges: lEdges } = getLayoutedElements(
+            initialNodes.map(n => ({ ...n, type: 'custom' })), // Force custom type
+            initialEdges
+        );
+        setLayoutedNodes(lNodes);
+        setLayoutedEdges(lEdges);
+    }, [initialNodes, initialEdges]);
 
     // Handle node click just for selection
     const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
@@ -83,46 +137,59 @@ export default function MindMap({
     };
 
     return (
-        <div className="h-screen w-full">
+        <div className="h-screen w-full bg-[#0a0a0f]">
             <ReactFlow
-                nodes={nodes}
-                edges={edges}
+                nodes={layoutedNodes}
+                edges={layoutedEdges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onNodeClick={onNodeClick}
+                nodeTypes={nodeTypes}
                 fitView
-                className="bg-gray-950"
+                className="bg-[#0a0a0f]"
             >
-                <Background color="#333" gap={16} />
-                <Controls />
+                <Background color="#1f2937" gap={24} size={1} />
+                <Controls className="!bg-gray-800 !border-gray-700 !fill-gray-400" />
             </ReactFlow>
 
             {selectedNode && (
-                <div className="absolute top-4 right-4 bg-gray-800 border border-gray-700 rounded-lg p-4 max-w-sm shadow-xl">
+                <div className="absolute top-6 right-6 w-80 bg-gray-900/90 backdrop-blur-xl border border-gray-700/50 rounded-2xl p-5 shadow-2xl animate-in fade-in slide-in-from-right-4 duration-200">
                     <div className="flex justify-between items-start mb-4">
-                        <h3 className="text-white font-bold">Selected Node</h3>
+                        <div>
+                            <h3 className="text-white font-bold text-lg">Node Details</h3>
+                            <span className="text-xs text-gray-500 uppercase tracking-wider font-medium">
+                                Step {selectedNode.data.step}
+                            </span>
+                        </div>
                         <button
                             onClick={() => setSelectedNode(null)}
-                            className="text-gray-400 hover:text-white"
+                            className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-gray-800 rounded-full"
                         >
-                            ✕
+                            <X className="w-4 h-4" />
                         </button>
                     </div>
 
-                    <div className="text-gray-300 text-sm space-y-2 mb-4">
-                        <p><span className="text-gray-500 font-medium">Step:</span> {selectedNode.data.step}</p>
-                        <p><span className="text-gray-500 font-medium">Thought:</span> {selectedNode.data.thought}</p>
-                        <p><span className="text-gray-500 font-medium">Decision:</span> {selectedNode.data.decision}</p>
+                    <div className="space-y-4 mb-6">
+                        <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/30">
+                            <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block mb-1">Thought</span>
+                            <p className="text-gray-200 text-sm leading-relaxed">{selectedNode.data.thought}</p>
+                        </div>
+
+                        {selectedNode.data.decision && (
+                            <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/30">
+                                <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold block mb-1">Decision</span>
+                                <p className="text-gray-200 text-sm leading-relaxed">{selectedNode.data.decision}</p>
+                            </div>
+                        )}
                     </div>
 
-                    <div className="flex gap-2">
-                        <button
-                            onClick={handleBranch}
-                            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded transition-colors flex items-center justify-center gap-2"
-                        >
-                            <span>⑂</span> Branch from here
-                        </button>
-                    </div>
+                    <button
+                        onClick={handleBranch}
+                        className="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2.5 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40 hover:-translate-y-0.5"
+                    >
+                        <GitBranch className="w-4 h-4" />
+                        Branch from here
+                    </button>
                 </div>
             )}
         </div>
