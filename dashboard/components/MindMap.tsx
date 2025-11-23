@@ -15,7 +15,8 @@ import ReactFlow, {
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
 import CustomNode from './CustomNode';
-import { GitBranch, X, Play } from 'lucide-react';
+import { GitBranch, X, Play, RotateCcw, Loader2 } from 'lucide-react';
+import { wsClient } from '@/lib/websocket-client';
 
 interface MindMapProps {
     currentSessionId: string | null;
@@ -74,6 +75,40 @@ export default function MindMap({
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
     const [layoutedNodes, setLayoutedNodes] = useState<Node[]>([]);
     const [layoutedEdges, setLayoutedEdges] = useState<Edge[]>([]);
+    const [isRollingBack, setIsRollingBack] = useState(false);
+
+    // WebSocket Integration
+    useEffect(() => {
+        wsClient.connect();
+
+        wsClient.on('state.rollback_completed', (msg: any) => {
+            console.log('Rollback completed:', msg);
+            setIsRollingBack(false);
+            // Trigger session refresh
+            window.dispatchEvent(new CustomEvent('refresh-sessions'));
+            // Also trigger node refresh for current session if applicable
+            if (currentSessionId) {
+                // In a real app, we might want a more direct way to trigger parent refresh
+                // For now, relying on the parent component to potentially listen or polling
+                // But let's at least clear selection
+                setSelectedNode(null);
+            }
+        });
+
+        wsClient.on('branch.created', (msg: any) => {
+            console.log('Branch created:', msg);
+            alert(`Branch "${msg.name}" created successfully!`);
+            window.dispatchEvent(new CustomEvent('refresh-sessions'));
+            setSelectedNode(null);
+        });
+
+        wsClient.on('system.error', (msg: any) => {
+            console.error('System error:', msg);
+            alert(`Error: ${msg.payload.message}`);
+            setIsRollingBack(false);
+        });
+
+    }, [currentSessionId]);
 
     // Apply layout whenever nodes or edges change
     useEffect(() => {
@@ -101,43 +136,41 @@ export default function MindMap({
 
         if (!newPrompt) return;
 
-        try {
-            const response = await fetch(
-                `http://localhost:3001/api/sessions/${currentSessionId}/branch`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        checkpoint_node_id: selectedNode.id,
-                        prompt: newPrompt
-                    })
-                }
-            );
+        wsClient.emit('branch.create_requested', {
+            checkpoint_node_id: selectedNode.id,
+            name: newPrompt,
+            fromCommitHash: selectedNode.data.commit_sha,
+            parentSessionId: currentSessionId
+        });
+    };
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+    // Handle Rollback
+    const handleRollback = () => {
+        if (!selectedNode || !selectedNode.data.commit_sha) {
+            alert('Cannot rollback: No commit hash available for this step.');
+            return;
+        }
 
-            const result = await response.json();
-
-            alert(
-                `✓ Branch created successfully!\n\n` +
-                `New Session ID: ${result.new_session_id.substring(0, 8)}...\n` +
-                `Parent Session: ${result.parent_session_id.substring(0, 8)}...`
-            );
-
-            // Trigger a refresh of the session history
-            window.dispatchEvent(new CustomEvent('refresh-sessions'));
-            setSelectedNode(null);
-
-        } catch (error) {
-            console.error('Error creating branch:', error);
-            alert('Failed to create branch. Check console for details.');
+        if (confirm(`Are you sure you want to rollback to Step ${selectedNode.data.step}? This will reset the agent's state.`)) {
+            setIsRollingBack(true);
+            wsClient.emit('state.rollback_requested', {
+                commitHash: selectedNode.data.commit_sha
+            });
         }
     };
 
     return (
-        <div className="h-screen w-full bg-[#0a0a0f]">
+        <div className="h-screen w-full bg-[#0a0a0f] relative">
+            {isRollingBack && (
+                <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 flex flex-col items-center shadow-2xl">
+                        <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-3" />
+                        <h3 className="text-white font-semibold">Rolling back state...</h3>
+                        <p className="text-gray-400 text-sm mt-1">Please wait while the agent resets.</p>
+                    </div>
+                </div>
+            )}
+
             <ReactFlow
                 nodes={layoutedNodes}
                 edges={layoutedEdges}
@@ -181,15 +214,33 @@ export default function MindMap({
                                 <p className="text-gray-200 text-sm leading-relaxed">{selectedNode.data.decision}</p>
                             </div>
                         )}
+
+                        {selectedNode.data.commit_sha && (
+                            <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/30 flex items-center gap-2">
+                                <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Commit:</span>
+                                <code className="text-blue-400 text-xs font-mono bg-blue-900/30 px-1.5 py-0.5 rounded">
+                                    {selectedNode.data.commit_sha.substring(0, 7)}
+                                </code>
+                            </div>
+                        )}
                     </div>
 
-                    <button
-                        onClick={handleBranch}
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2.5 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40 hover:-translate-y-0.5"
-                    >
-                        <GitBranch className="w-4 h-4" />
-                        Branch from here
-                    </button>
+                    <div className="grid grid-cols-2 gap-3">
+                        <button
+                            onClick={handleBranch}
+                            className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium py-2.5 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40 hover:-translate-y-0.5"
+                        >
+                            <GitBranch className="w-4 h-4" />
+                            Branch
+                        </button>
+                        <button
+                            onClick={handleRollback}
+                            className="bg-red-600/80 hover:bg-red-500 text-white text-sm font-medium py-2.5 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-red-900/20 hover:shadow-red-900/40 hover:-translate-y-0.5"
+                        >
+                            <RotateCcw className="w-4 h-4" />
+                            Rollback
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
