@@ -34,10 +34,14 @@ class AntigravityBrainMonitor:
         
         steps = []
         for match in re.finditer(pattern, content, re.MULTILINE):
-            status, description = match.groups()
+            status_char, description = match.groups()
+            
+            # Map status char to status string
+            status_map = {'x': 'COMPLETED', '/': 'IN_PROGRESS', ' ': 'PENDING'}
+            status = status_map.get(status_char, 'PENDING')
             
             # Only process completed or in-progress tasks
-            if status in ['x', '/']:
+            if status_char in ['x', '/']:
                 task_id = f"task_{hash(description)}"
                 
                 # Skip if already processed
@@ -49,9 +53,13 @@ class AntigravityBrainMonitor:
                 
                 steps.append({
                     'step': self.step_counter,
-                    'thought': f"Working on: {description}",
+                    'node_type': 'TASK',
+                    'status': status,
+                    'thought': f"Task: {description}",
                     'decision': description,
                     'file_examined': 'task.md',
+                    'file_path': str(task_file),
+                    'context': description,
                     'alternatives_considered': [
                         'Complete this task',
                         'Skip to next task',
@@ -89,16 +97,22 @@ class AntigravityBrainMonitor:
             
             # Extract first paragraph as thought
             thought = ""
+            context = []
             for line in lines[1:]:
                 if line.strip() and not line.startswith('#'):
-                    thought = line.strip()
-                    break
+                    if not thought:
+                        thought = line.strip()
+                    context.append(line)
             
             steps.append({
                 'step': self.step_counter,
+                'node_type': 'PLAN',
+                'status': 'COMPLETED',
                 'thought': thought or f"Planning: {title}",
-                'decision': f"Design decision: {title}",
+                'decision': f"Design: {title}",
                 'file_examined': 'implementation_plan.md',
+                'file_path': str(plan_file),
+                'context': '\n'.join(context[:5]), # First 5 lines as context
                 'alternatives_considered': [
                     'Current approach',
                     'Alternative design',
@@ -133,11 +147,17 @@ class AntigravityBrainMonitor:
             self.processed_tasks.add(section_id)
             self.step_counter += 1
             
+            context = '\n'.join(lines[1:6]) # First 5 lines
+            
             steps.append({
                 'step': self.step_counter,
-                'thought': f"Completed: {title}",
-                'decision': f"Verified: {title}",
+                'node_type': 'VERIFICATION',
+                'status': 'VERIFIED',
+                'thought': f"Verified: {title}",
+                'decision': f"Completed: {title}",
                 'file_examined': 'walkthrough.md',
+                'file_path': str(walkthrough_file),
+                'context': context,
                 'alternatives_considered': [
                     'Implementation complete',
                     'Needs refinement',
