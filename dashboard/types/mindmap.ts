@@ -1,10 +1,15 @@
 export type NodeType = 'reasoning' | 'decision' | 'tool_call' | 'code_edit' | 'error';
 
 export interface AgentEvent {
-    id: string;
-    timestamp: string;
+    id?: string;
+    step?: number;
+    timestamp?: string;
     type: NodeType;
-    content: string;
+    content?: string;
+    thought?: string;
+    decision?: string;
+    alternatives?: string[];
+    file?: string;
     metadata?: {
         confidence?: number;
         file?: string;

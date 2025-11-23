@@ -48,15 +48,16 @@ export default function MindMap({ events }: MindMapProps) {
         let yOffset = 100;
 
         events.forEach((event, index) => {
-            const nodeId = event.id;
+            const nodeId = (event.id || `step-${event.step || index}`).toString();
+            const content = event.content || event.thought || event.decision || 'No content';
 
             // Create Node
             newNodes.push({
                 id: nodeId,
                 type: 'default', // or custom based on event.type
                 data: {
-                    label: `${event.type.toUpperCase()}: ${event.content.substring(0, 20)}...`,
-                    fullContent: event.content
+                    label: `${event.type.toUpperCase()}: ${content.substring(0, 20)}...`,
+                    fullContent: content
                 },
                 position: { x: 250, y: yOffset },
                 style: {
@@ -69,7 +70,8 @@ export default function MindMap({ events }: MindMapProps) {
 
             // Create Edge (connect to previous node or parent)
             // For this MVP, just connect sequentially
-            const sourceId = index === 0 ? 'start' : events[index - 1].id;
+            const prevEvent = events[index - 1];
+            const sourceId = index === 0 ? 'start' : (prevEvent.id || `step-${prevEvent.step || index - 1}`).toString();
 
             newEdges.push({
                 id: `e-${sourceId}-${nodeId}`,
