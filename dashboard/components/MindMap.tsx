@@ -1,126 +1,121 @@
 'use client';
 
-import React, { useEffect, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import ReactFlow, {
+    Background,
+    Controls,
     Node,
     Edge,
-    Controls,
-    Background,
     useNodesState,
     useEdgesState,
-    addEdge,
     Connection,
-    MarkerType,
+    addEdge,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { AgentEvent } from '@/types/mindmap';
 
 interface MindMapProps {
-    events: AgentEvent[];
+    currentSessionId: string | null;
+    nodes: Node[];
+    edges: Edge[];
+    onNodesChange: any;
+    onEdgesChange: any;
 }
 
-const initialNodes: Node[] = [
-    {
-        id: 'start',
-        type: 'input',
-        data: { label: 'Agent Started' },
-        position: { x: 250, y: 0 },
-    },
-];
+export default function MindMap({
+    currentSessionId,
+    nodes,
+    edges,
+    onNodesChange,
+    onEdgesChange
+}: MindMapProps) {
 
-const nodeTypes = {
-    // We can define custom node types here later
-};
+    const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
-export default function MindMap({ events }: MindMapProps) {
-    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-    const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+    // Handle node click for rollback
+    const onNodeClick = useCallback(async (event: React.MouseEvent, node: Node) => {
+        setSelectedNode(node);
 
-    // Transform events into nodes/edges
-    useEffect(() => {
-        if (events.length === 0) return;
+        const confirmRollback = window.confirm(
+            `Branch from this checkpoint?\n\n` +
+            `Node: ${node.data.label}\n` +
+            `Step: ${node.data.step}\n\n` +
+            `This will create a new session starting from this point.`
+        );
 
-        const newNodes: Node[] = [];
-        const newEdges: Edge[] = [];
+        if (!confirmRollback || !currentSessionId) return;
 
-        // Simple layout strategy: vertical stack for now
-        // In a real app, use dagre or similar for auto-layout
-        let yOffset = 100;
+        const newPrompt = prompt(
+            'Enter a description for this branch:',
+            `Branch from step ${node.data.step}`
+        );
 
-        events.forEach((event, index) => {
-            const nodeId = (event.id || `step-${event.step || index}`).toString();
-            const content = event.content || event.thought || event.decision || 'No content';
+        if (!newPrompt) return;
 
-            // Create Node
-            newNodes.push({
-                id: nodeId,
-                type: 'default', // or custom based on event.type
-                data: {
-                    label: `${event.type.toUpperCase()}: ${content.substring(0, 20)}...`,
-                    fullContent: content
-                },
-                position: { x: 250, y: yOffset },
-                style: {
-                    background: getNodeColor(event.type),
-                    color: '#fff',
-                    border: '1px solid #333',
-                    width: 200
+        try {
+            const response = await fetch(
+                `http://localhost:3001/api/sessions/${currentSessionId}/branch`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        checkpoint_node_id: node.id,
+                        prompt: newPrompt
+                    })
                 }
-            });
+            );
 
-            // Create Edge (connect to previous node or parent)
-            // For this MVP, just connect sequentially
-            const prevEvent = events[index - 1];
-            const sourceId = index === 0 ? 'start' : (prevEvent.id || `step-${prevEvent.step || index - 1}`).toString();
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
 
-            newEdges.push({
-                id: `e-${sourceId}-${nodeId}`,
-                source: sourceId,
-                target: nodeId,
-                animated: true,
-                markerEnd: { type: MarkerType.ArrowClosed },
-            });
+            const result = await response.json();
 
-            yOffset += 100;
-        });
+            alert(
+                `✓ Branch created successfully!\n\n` +
+                `New Session ID: ${result.new_session_id.substring(0, 8)}...\n` +
+                `Parent Session: ${result.parent_session_id.substring(0, 8)}...`
+            );
 
-        // Merge with existing nodes (simplified: just replace for now to avoid duplication logic complexity in MVP)
-        // In production, we'd append carefully.
-        setNodes((nds) => [...initialNodes, ...newNodes]);
-        setEdges((eds) => [...newEdges]);
+            // Optionally, trigger a refresh of the session history
+            window.dispatchEvent(new CustomEvent('refresh-sessions'));
 
-    }, [events, setNodes, setEdges]);
-
-    const onConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-        [setEdges]
-    );
+        } catch (error) {
+            console.error('Error creating branch:', error);
+            alert('Failed to create branch. Check console for details.');
+        }
+    }, [currentSessionId]);
 
     return (
-        <div style={{ width: '100%', height: '100%' }}>
+        <div className="h-screen w-full">
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                nodeTypes={nodeTypes}
+                onNodeClick={onNodeClick}
                 fitView
+                className="bg-gray-950"
             >
+                <Background color="#333" gap={16} />
                 <Controls />
-                <Background />
             </ReactFlow>
+
+            {selectedNode && (
+                <div className="absolute top-4 right-4 bg-gray-800 border border-gray-700 rounded-lg p-4 max-w-sm">
+                    <h3 className="text-white font-bold mb-2">Selected Node</h3>
+                    <div className="text-gray-300 text-sm space-y-1">
+                        <p><span className="text-gray-400">Step:</span> {selectedNode.data.step}</p>
+                        <p><span className="text-gray-400">Thought:</span> {selectedNode.data.thought}</p>
+                        <p><span className="text-gray-400">Decision:</span> {selectedNode.data.decision}</p>
+                    </div>
+                    <button
+                        onClick={() => setSelectedNode(null)}
+                        className="mt-3 text-gray-400 hover:text-white text-sm"
+                    >
+                        Close
+                    </button>
+                </div>
+            )}
         </div>
     );
-}
-
-function getNodeColor(type: string) {
-    switch (type) {
-        case 'reasoning': return '#3b82f6'; // blue
-        case 'decision': return '#8b5cf6'; // purple
-        case 'tool_call': return '#f59e0b'; // amber
-        case 'code_edit': return '#10b981'; // green
-        case 'error': return '#ef4444'; // red
-        default: return '#6b7280'; // gray
-    }
 }
