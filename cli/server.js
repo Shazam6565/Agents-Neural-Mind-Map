@@ -237,98 +237,166 @@ if (!fs.existsSync(reasoningTracePath)) {
 }
 
 // Watch for changes
-fs.watch(reasoningTracePath, (eventType) => {
-    if (eventType === 'change') {
-        if (agentState.status === 'PAUSED' || agentState.pauseRequested || agentState.status === 'ROLLING_BACK') {
-            console.log(`Agent status is ${agentState.status}, ignoring file changes`);
+// Debounced file watcher handler
+let isProcessing = false;
+
+const processFileChange = async () => {
+    if (isProcessing) return;
+    isProcessing = true;
+
+    const maxRetries = 5;
+    const baseDelay = 100;
+    let steps = null;
+
+    // Retry loop for reading and parsing JSON
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const data = await fs.promises.readFile(reasoningTracePath, 'utf8');
+            if (!data.trim()) {
+                isProcessing = false;
+                return;
+            }
+            steps = JSON.parse(data);
+            break; // Success
+        } catch (error) {
+            if (error instanceof SyntaxError && attempt < maxRetries) {
+                const delay = baseDelay * attempt;
+                console.log(`JSON parse error (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+                console.error('Error reading/parsing reasoning trace:', error.message);
+                isProcessing = false;
+                return;
+            }
+        }
+    }
+
+    if (!steps) {
+        isProcessing = false;
+        return;
+    }
+
+    try {
+        // Process through LangGraph when new steps appear
+        const newSteps = steps.filter(step => !processedSteps.has(step.step));
+
+        if (newSteps.length > 0) {
+            console.log(`Processing ${newSteps.length} new steps through LangGraph...`);
+            agentState.status = 'RUNNING';
+            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'RUNNING' }));
+
+            // Spawn Python process to run LangGraph
+            const pythonProcess = spawn("python3", [
+                path.join(__dirname, "langgraph_agent.py")
+            ], {
+                cwd: path.join(__dirname, "..") // Run from project root so it finds reasoning_trace.json
+            });
+
+            pythonProcess.stderr.on('data', (data) => {
+                console.error(`LangGraph Error: ${data}`);
+            });
+
+            pythonProcess.on('close', async (code) => {
+                console.log(`LangGraph processing completed with code ${code}`);
+                agentState.status = 'IDLE';
+                io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'IDLE' }));
+
+                // Now emit events to dashboard AND commit to git
+                for (const step of newSteps) {
+                    if (!processedSteps.has(step.step)) {
+                        processedSteps.add(step.step);
+
+                        // Commit to Git
+                        try {
+                            const stepId = require('crypto').randomUUID();
+                            const commitHash = await gitStateManager.createStepCommit(
+                                stepId,
+                                step.step,
+                                step.decision,
+                                step.thought,
+                                step.file_examined,
+                                { alternatives: step.alternatives_considered }
+                            );
+                            console.log(`✓ Committed step ${step.step}: ${commitHash}`);
+
+                            // Update DB with commit info
+                            const db = new sqlite3.Database(DB_PATH);
+                            db.run(`
+                                UPDATE node_executions 
+                                SET commit_sha = ?, step_id = ?
+                                WHERE id = (SELECT MAX(id) FROM node_executions)
+                            `, [commitHash, stepId], (err) => {
+                                if (err) console.error("DB Update Error:", err);
+                                db.close();
+                            });
+
+                            // Emit event
+                            const payload = {
+                                step: step.step,
+                                thought: step.thought,
+                                file: step.file_examined,
+                                decision: step.decision,
+                                alternatives: step.alternatives_considered,
+                                commitHash: commitHash,
+                                stepId: stepId
+                            };
+
+                            console.log(`Emitting step ${step.step}`);
+                            io.emit("agent-event", WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STEP_CREATED, payload));
+
+                        } catch (gitError) {
+                            console.error(`Failed to commit step ${step.step}:`, gitError);
+                            io.emit('agent-event', WebSocketProtocol.createError(null, 'GIT_COMMIT_FAILED', gitError.message));
+                        }
+                    }
+                }
+            });
+        }
+    } catch (e) {
+        console.error("Error processing steps:", e);
+    } finally {
+        isProcessing = false;
+    }
+};
+
+let fsWatcher;
+const startWatcher = () => {
+    if (fsWatcher) {
+        try {
+            fsWatcher.close();
+        } catch (e) {
+            // Ignore close errors
+        }
+    }
+
+    try {
+        if (!fs.existsSync(reasoningTracePath)) {
+            // If file doesn't exist yet, wait and try again
+            setTimeout(startWatcher, 1000);
             return;
         }
 
-        fs.readFile(reasoningTracePath, 'utf8', (err, data) => {
-            if (err) {
-                console.error("Error reading reasoning trace:", err);
-                return;
-            }
-
-            try {
-                const steps = JSON.parse(data);
-
-                // Process through LangGraph when new steps appear
-                const newSteps = steps.filter(step => !processedSteps.has(step.step));
-
-                if (newSteps.length > 0) {
-                    console.log(`Processing ${newSteps.length} new steps through LangGraph...`);
-                    agentState.status = 'RUNNING';
-                    io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'RUNNING' }));
-
-                    // Spawn Python process to run LangGraph
-                    const pythonProcess = spawn("python3", [
-                        path.join(__dirname, "langgraph_agent.py")
-                    ], {
-                        cwd: path.join(__dirname, "..") // Run from project root so it finds reasoning_trace.json
-                    });
-
-                    pythonProcess.stderr.on('data', (data) => {
-                        console.error(`LangGraph Error: ${data}`);
-                    });
-
-                    pythonProcess.on('close', async (code) => {
-                        console.log(`LangGraph processing completed with code ${code}`);
-                        agentState.status = 'IDLE';
-                        io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'IDLE' }));
-
-                        // Now emit events to dashboard AND commit to git
-                        for (const step of steps) {
-                            if (!processedSteps.has(step.step)) {
-                                processedSteps.add(step.step);
-
-                                // Commit to Git
-                                try {
-                                    const stepId = require('crypto').randomUUID();
-                                    const commitHash = await gitStateManager.createStepCommit(
-                                        stepId,
-                                        step.step,
-                                        step.decision,
-                                        step.thought,
-                                        step.file_examined,
-                                        step // Pass full step object as metadata
-                                    );
-                                    console.log(`✓ Committed step ${step.step}: ${commitHash}`);
-
-                                    // Update DB with commit info
-                                    const db = new sqlite3.Database(DB_PATH);
-                                    db.run(`
-                                        UPDATE node_executions 
-                                        SET commit_sha = ?, step_id = ?
-                                        WHERE id = (SELECT MAX(id) FROM node_executions) -- Simplification: assumes last inserted is current
-                                    `, [commitHash, stepId]);
-                                    db.close();
-
-                                    // Emit event with full metadata
-                                    const payload = {
-                                        ...step, // Include all fields from step (node_type, status, etc.)
-                                        commitHash: commitHash,
-                                        stepId: stepId
-                                    };
-
-                                    console.log(`Emitting step ${step.step}`);
-                                    io.emit("agent-event", WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STEP_CREATED, payload));
-
-                                } catch (gitError) {
-                                    console.error(`Failed to commit step ${step.step}:`, gitError);
-                                    io.emit('agent-event', WebSocketProtocol.createError(null, 'GIT_COMMIT_FAILED', gitError.message));
-                                }
-                            }
-                        }
-                    });
-                }
-
-            } catch (e) {
-                console.error("Error parsing reasoning trace JSON:", e);
+        fsWatcher = fs.watch(reasoningTracePath, (eventType) => {
+            // console.log(`File event: ${eventType}`);
+            if (eventType === 'rename') {
+                // File was replaced (atomic write) or deleted.
+                // Wait briefly for the new file to settle, then re-watch and process.
+                setTimeout(() => {
+                    startWatcher();
+                    processFileChange();
+                }, 100);
+            } else {
+                processFileChange();
             }
         });
+        console.log("✓ File watcher (re)started");
+    } catch (e) {
+        console.error("Error starting watcher:", e);
+        setTimeout(startWatcher, 1000);
     }
-});
+};
+
+startWatcher();
 
 io.on("connection", (socket) => {
     console.log("Dashboard connected");

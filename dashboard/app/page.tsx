@@ -115,15 +115,34 @@ export default function Home() {
       <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-900/20 via-gray-900/0 to-gray-900/0 pointer-events-none" />
 
       {/* Status Banner */}
-      {agentStatus !== 'IDLE' && (
-        <div className={`fixed top-0 left-0 right-0 z-50 text-center py-1 text-xs font-bold tracking-wider uppercase
-            ${agentStatus === 'RUNNING' ? 'bg-green-500/80 text-white' : ''}
-            ${agentStatus === 'PAUSED' ? 'bg-yellow-500/80 text-black' : ''}
-            ${agentStatus === 'ROLLING_BACK' ? 'bg-red-500/80 text-white' : ''}
-        `}>
-          AGENT STATUS: {agentStatus}
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+        {/* Connection Status */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-xs font-medium text-gray-400">
+          <div className={`w-2 h-2 rounded-full ${agentStatus !== 'IDLE' ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+          BRAIN MONITOR {agentStatus !== 'IDLE' ? 'ACTIVE' : 'READY'}
         </div>
-      )}
+
+        {/* Agent Activity Status */}
+        {agentStatus !== 'IDLE' && (
+          <div className={`px-4 py-2 rounded-lg backdrop-blur-md border text-sm font-bold shadow-xl animate-in slide-in-from-right duration-300
+              ${agentStatus === 'RUNNING' ? 'bg-blue-500/20 border-blue-500/50 text-blue-200' : ''}
+              ${agentStatus === 'PAUSED' ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-200' : ''}
+              ${agentStatus === 'ROLLING_BACK' ? 'bg-red-500/20 border-red-500/50 text-red-200' : ''}
+          `}>
+            <div className="flex items-center gap-3">
+              {agentStatus === 'RUNNING' && <div className="w-2 h-2 bg-blue-400 rounded-full animate-ping" />}
+              {agentStatus === 'PAUSED' && <div className="w-2 h-2 bg-yellow-400 rounded-full" />}
+              {agentStatus === 'ROLLING_BACK' && <div className="w-2 h-2 bg-red-400 rounded-full animate-spin" />}
+
+              <span>
+                {agentStatus === 'RUNNING' && 'PROCESSING THOUGHTS...'}
+                {agentStatus === 'PAUSED' && 'BRAIN PAUSED'}
+                {agentStatus === 'ROLLING_BACK' && 'REWINDING MEMORY...'}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="relative z-10 flex h-full w-full pt-4"> {/* Added pt-4 to account for banner if needed, or just let it overlay */}
         <SessionHistory

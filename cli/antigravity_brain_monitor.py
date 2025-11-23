@@ -34,14 +34,10 @@ class AntigravityBrainMonitor:
         
         steps = []
         for match in re.finditer(pattern, content, re.MULTILINE):
-            status_char, description = match.groups()
-            
-            # Map status char to status string
-            status_map = {'x': 'COMPLETED', '/': 'IN_PROGRESS', ' ': 'PENDING'}
-            status = status_map.get(status_char, 'PENDING')
+            status, description = match.groups()
             
             # Only process completed or in-progress tasks
-            if status_char in ['x', '/']:
+            if status in ['x', '/']:
                 task_id = f"task_{hash(description)}"
                 
                 # Skip if already processed
@@ -53,13 +49,9 @@ class AntigravityBrainMonitor:
                 
                 steps.append({
                     'step': self.step_counter,
-                    'node_type': 'TASK',
-                    'status': status,
-                    'thought': f"Task: {description}",
+                    'thought': f"Working on: {description}",
                     'decision': description,
                     'file_examined': 'task.md',
-                    'file_path': str(task_file),
-                    'context': description,
                     'alternatives_considered': [
                         'Complete this task',
                         'Skip to next task',
@@ -97,22 +89,16 @@ class AntigravityBrainMonitor:
             
             # Extract first paragraph as thought
             thought = ""
-            context = []
             for line in lines[1:]:
                 if line.strip() and not line.startswith('#'):
-                    if not thought:
-                        thought = line.strip()
-                    context.append(line)
+                    thought = line.strip()
+                    break
             
             steps.append({
                 'step': self.step_counter,
-                'node_type': 'PLAN',
-                'status': 'COMPLETED',
                 'thought': thought or f"Planning: {title}",
-                'decision': f"Design: {title}",
+                'decision': f"Design decision: {title}",
                 'file_examined': 'implementation_plan.md',
-                'file_path': str(plan_file),
-                'context': '\n'.join(context[:5]), # First 5 lines as context
                 'alternatives_considered': [
                     'Current approach',
                     'Alternative design',
@@ -147,17 +133,11 @@ class AntigravityBrainMonitor:
             self.processed_tasks.add(section_id)
             self.step_counter += 1
             
-            context = '\n'.join(lines[1:6]) # First 5 lines
-            
             steps.append({
                 'step': self.step_counter,
-                'node_type': 'VERIFICATION',
-                'status': 'VERIFIED',
-                'thought': f"Verified: {title}",
-                'decision': f"Completed: {title}",
+                'thought': f"Completed: {title}",
+                'decision': f"Verified: {title}",
                 'file_examined': 'walkthrough.md',
-                'file_path': str(walkthrough_file),
-                'context': context,
                 'alternatives_considered': [
                     'Implementation complete',
                     'Needs refinement',
@@ -203,14 +183,36 @@ class AntigravityBrainMonitor:
         # Append new steps
         all_steps = existing_steps + new_steps
         
-        # Write back
-        with open(self.output_file, 'w') as f:
-            json.dump(all_steps, f, indent=2)
-        
-        print(f"✓ Added {len(new_steps)} new reasoning step(s)")
-        for step in new_steps:
-            print(f"   Step {step['step']}: {step['decision']}")
+        # Atomic write: write to temp file then rename
+        temp_file = self.output_file.with_suffix('.tmp')
+        try:
+            with open(temp_file, 'w') as f:
+                json.dump(all_steps, f, indent=2)
+            
+            # Atomic rename
+            temp_file.replace(self.output_file)
+            
+            print(f"✓ Added {len(new_steps)} new reasoning step(s)")
+            for step in new_steps:
+                print(f"   Step {step['step']}: {step['decision']}")
+                
+        except Exception as e:
+            print(f"❌ Error writing reasoning trace: {e}")
+            if temp_file.exists():
+                temp_file.unlink()
     
+    @staticmethod
+    def find_latest_session(base_path: Path) -> Optional[Path]:
+        """Find the most recently modified session directory"""
+        if not base_path.exists():
+            return None
+            
+        sessions = [d for d in base_path.iterdir() if d.is_dir()]
+        if not sessions:
+            return None
+            
+        return max(sessions, key=lambda d: d.stat().st_mtime)
+
     def monitor(self, interval: int = 3):
         """Continuously monitor the brain directory"""
         print(f"🧠 Monitoring Antigravity Brain: {self.brain_path}")
@@ -220,6 +222,16 @@ class AntigravityBrainMonitor:
         
         try:
             while True:
+                # Check if we should switch to a newer session
+                if self.brain_path.parent.exists():
+                    latest_session = self.find_latest_session(self.brain_path.parent)
+                    if latest_session and latest_session != self.brain_path:
+                        print(f"\n🔄 Detected new session: {latest_session.name}")
+                        print(f"   Switching monitor to new session...")
+                        self.brain_path = latest_session
+                        # Optional: Reset processed tasks if you want to re-capture from new session
+                        # self.processed_tasks.clear() 
+                
                 new_steps = self.scan_brain_directory()
                 
                 if new_steps:
@@ -239,8 +251,8 @@ if __name__ == "__main__":
         description='Monitor Antigravity brain directory and extract reasoning'
     )
     parser.add_argument(
-        'brain_session_path',
-        help='Path to Antigravity brain session directory (e.g., ~/.gemini/antigravity/brain/<session_id>)'
+        '--brain-path', '-b',
+        help='Path to Antigravity brain session directory. If not provided, auto-detects latest session.'
     )
     parser.add_argument(
         '--output', '-o',
@@ -256,13 +268,21 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Validate brain path
-    brain_path = Path(args.brain_session_path)
-    if not brain_path.exists():
-        print(f"❌ Error: Brain directory does not exist: {brain_path}")
-        print(f"\nTip: Find your current Antigravity session in:")
-        print(f"     ~/.gemini/antigravity/brain/")
+    brain_base_dir = Path.home() / ".gemini/antigravity/brain"
+    
+    if args.brain_path:
+        session_path = Path(args.brain_path)
+    else:
+        print(f"🔍 Auto-detecting latest session in {brain_base_dir}...")
+        session_path = AntigravityBrainMonitor.find_latest_session(brain_base_dir)
+        if not session_path:
+             print(f"❌ Error: No sessions found in {brain_base_dir}")
+             sys.exit(1)
+        print(f"✓ Found latest session: {session_path.name}")
+
+    if not session_path.exists():
+        print(f"❌ Error: Brain directory does not exist: {session_path}")
         sys.exit(1)
     
-    monitor = AntigravityBrainMonitor(args.brain_session_path, args.output)
+    monitor = AntigravityBrainMonitor(str(session_path), args.output)
     monitor.monitor(args.interval)
