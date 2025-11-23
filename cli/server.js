@@ -8,8 +8,18 @@ const cors = require("cors");
 const GitStateManager = require("./git-state-manager");
 const WebSocketProtocol = require("./websocket-protocol");
 
+// Configuration
+const WORKSPACE_PATH = process.env.WORKSPACE_PATH || path.join(__dirname, "../workspace");
+const DB_PATH = path.join(__dirname, "../agent_mindmap.db");
+
+// Ensure workspace directory exists
+if (!fs.existsSync(WORKSPACE_PATH)) {
+    console.log(`Creating workspace directory at: ${WORKSPACE_PATH}`);
+    fs.mkdirSync(WORKSPACE_PATH, { recursive: true });
+}
+
 // Initialize Git State Manager
-const gitStateManager = new GitStateManager(path.join(__dirname, ".."));
+const gitStateManager = new GitStateManager(WORKSPACE_PATH);
 gitStateManager.initialize().catch(console.error);
 
 // Create Express app
@@ -17,14 +27,39 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const DB_PATH = path.join(__dirname, "../agent_mindmap.db");
-
 // Agent State Tracking
 let agentState = {
     status: 'IDLE', // IDLE | RUNNING | PAUSED | ROLLING_BACK
     currentStep: null,
     pauseRequested: false
 };
+
+// Helper: Message Deduplication
+async function checkAndRecordMessage(eventId, messageType) {
+    return new Promise((resolve, reject) => {
+        const db = new sqlite3.Database(DB_PATH);
+        db.get("SELECT message_id FROM processed_messages WHERE message_id = ?", [eventId], (err, row) => {
+            if (err) {
+                db.close();
+                return reject(err);
+            }
+            if (row) {
+                db.close();
+                return resolve(false); // Already processed
+            }
+
+            // Record it
+            db.run("INSERT INTO processed_messages (message_id, message_type, processed_at) VALUES (?, ?, ?)",
+                [eventId, messageType, new Date().toISOString()],
+                (insertErr) => {
+                    db.close();
+                    if (insertErr) return reject(insertErr);
+                    resolve(true); // New message
+                }
+            );
+        });
+    });
+}
 
 // ============================================
 // REST API ENDPOINTS
@@ -161,6 +196,7 @@ app.post('/api/sessions/:sessionId/resume', (req, res) => {
 
 const httpServer = app.listen(3001, () => {
     console.log("✓ API Server started on port 3001");
+    console.log(`  Workspace Path: ${WORKSPACE_PATH}`);
     console.log("  Available endpoints:");
     console.log("    GET  /api/sessions");
     console.log("    GET  /api/sessions/:id");
@@ -253,9 +289,7 @@ fs.watch(reasoningTracePath, (eventType) => {
                                     );
                                     console.log(`✓ Committed step ${step.step}: ${commitHash}`);
 
-                                    // Update DB with commit info (This requires updating how we insert into DB, 
-                                    // but for now we rely on the Python script doing the insertion. 
-                                    // Ideally, we should update the DB record here with the commit hash)
+                                    // Update DB with commit info
                                     const db = new sqlite3.Database(DB_PATH);
                                     db.run(`
                                         UPDATE node_executions 
@@ -280,6 +314,7 @@ fs.watch(reasoningTracePath, (eventType) => {
 
                                 } catch (gitError) {
                                     console.error(`Failed to commit step ${step.step}:`, gitError);
+                                    io.emit('agent-event', WebSocketProtocol.createError(null, 'GIT_COMMIT_FAILED', gitError.message));
                                 }
                             }
                         }
@@ -302,6 +337,14 @@ io.on("connection", (socket) => {
 
         try {
             WebSocketProtocol.validate(message);
+
+            // Deduplication
+            const isNew = await checkAndRecordMessage(message.event_id, WebSocketProtocol.EVENT_TYPES.ROLLBACK_REQUESTED);
+            if (!isNew) {
+                console.log(`Duplicate rollback request ${message.event_id} ignored.`);
+                return;
+            }
+
             const { commitHash } = message.payload;
 
             agentState.status = 'ROLLING_BACK';
@@ -343,6 +386,14 @@ io.on("connection", (socket) => {
 
         try {
             WebSocketProtocol.validate(message);
+
+            // Deduplication
+            const isNew = await checkAndRecordMessage(message.event_id, WebSocketProtocol.EVENT_TYPES.BRANCH_REQUESTED);
+            if (!isNew) {
+                console.log(`Duplicate branch request ${message.event_id} ignored.`);
+                return;
+            }
+
             const { name, fromCommitHash, parentSessionId } = message.payload;
 
             const branchName = await gitStateManager.createTimeline(fromCommitHash, name);
@@ -357,7 +408,11 @@ io.on("connection", (socket) => {
                 VALUES (?, ?, ?, ?, ?, ?)
             `, [newSessionId, parentSessionId, `Branch: ${name}`, createdAt, branchName, fromCommitHash], (err) => {
                 db.close();
-                if (err) throw err;
+                if (err) {
+                    console.error("Database error creating session:", err);
+                    socket.emit('agent-event', WebSocketProtocol.createError(message, 'DB_ERROR', err.message));
+                    return;
+                }
 
                 // Emit success
                 socket.emit('agent-event', WebSocketProtocol.createMessage(
