@@ -202,8 +202,8 @@ class AntigravityBrainMonitor:
                 temp_file.unlink()
     
     @staticmethod
-    def find_latest_session(base_path: Path) -> Optional[Path]:
-        """Find the most recently modified session directory"""
+    def find_latest_session(base_path: Path, project_filter: Optional[str] = None) -> Optional[Path]:
+        """Find the most recently modified session directory, optionally filtering by project path"""
         if not base_path.exists():
             return None
             
@@ -211,11 +211,48 @@ class AntigravityBrainMonitor:
         if not sessions:
             return None
             
-        return max(sessions, key=lambda d: d.stat().st_mtime)
+        # Sort by modification time, newest first
+        sessions.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+        
+        if not project_filter:
+            return sessions[0]
+            
+        print(f"🔍 Searching for session matching project: {project_filter}")
+        
+        # Check each session for references to the project
+        for session in sessions:
+            # Check task.md for project path or file references
+            task_file = session / 'task.md'
+            if task_file.exists():
+                try:
+                    with open(task_file, 'r') as f:
+                        content = f.read()
+                        # Simple check: does the content mention the project name or path?
+                        # We normalize paths to handle potential differences
+                        if project_filter in content or Path(project_filter).name in content:
+                            return session
+                except Exception:
+                    pass
+            
+            # Check implementation_plan.md
+            plan_file = session / 'implementation_plan.md'
+            if plan_file.exists():
+                try:
+                    with open(plan_file, 'r') as f:
+                        content = f.read()
+                        if project_filter in content or Path(project_filter).name in content:
+                            return session
+                except Exception:
+                    pass
+                    
+        print(f"⚠️ No session found matching project {project_filter}, defaulting to latest")
+        return sessions[0]
 
-    def monitor(self, interval: int = 3):
+    def monitor(self, interval: int = 3, project_filter: Optional[str] = None):
         """Continuously monitor the brain directory"""
         print(f"🧠 Monitoring Antigravity Brain: {self.brain_path}")
+        if project_filter:
+            print(f"🎯 Filtering for project: {project_filter}")
         print(f"📝 Writing reasoning traces to: {self.output_file}")
         print(f"⏱️  Checking every {interval} seconds")
         print()
@@ -224,9 +261,9 @@ class AntigravityBrainMonitor:
             while True:
                 # Check if we should switch to a newer session
                 if self.brain_path.parent.exists():
-                    latest_session = self.find_latest_session(self.brain_path.parent)
+                    latest_session = self.find_latest_session(self.brain_path.parent, project_filter)
                     if latest_session and latest_session != self.brain_path:
-                        print(f"\n🔄 Detected new session: {latest_session.name}")
+                        print(f"\n🔄 Detected new relevant session: {latest_session.name}")
                         print(f"   Switching monitor to new session...")
                         self.brain_path = latest_session
                         # Optional: Reset processed tasks if you want to re-capture from new session
@@ -255,6 +292,10 @@ if __name__ == "__main__":
         help='Path to Antigravity brain session directory. If not provided, auto-detects latest session.'
     )
     parser.add_argument(
+        '--project-filter', '-p',
+        help='Filter sessions by project path or name (e.g., "Shaurya-Portfolio")'
+    )
+    parser.add_argument(
         '--output', '-o',
         default='reasoning_trace.json',
         help='Output file for reasoning traces'
@@ -274,7 +315,7 @@ if __name__ == "__main__":
         session_path = Path(args.brain_path)
     else:
         print(f"🔍 Auto-detecting latest session in {brain_base_dir}...")
-        session_path = AntigravityBrainMonitor.find_latest_session(brain_base_dir)
+        session_path = AntigravityBrainMonitor.find_latest_session(brain_base_dir, args.project_filter)
         if not session_path:
              print(f"❌ Error: No sessions found in {brain_base_dir}")
              sys.exit(1)
@@ -285,4 +326,4 @@ if __name__ == "__main__":
         sys.exit(1)
     
     monitor = AntigravityBrainMonitor(str(session_path), args.output)
-    monitor.monitor(args.interval)
+    monitor.monitor(args.interval, args.project_filter)
