@@ -1,364 +1,240 @@
-const { Server } = require("socket.io");
-const { spawn } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-const sqlite3 = require("sqlite3").verbose();
-const express = require("express");
-const cors = require("cors");
-const GitStateManager = require("./git-state-manager");
-const WebSocketProtocol = require("./websocket-protocol");
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const { spawn } = require('child_process');
 
 // Configuration
-const WORKSPACE_PATH = process.env.WORKSPACE_PATH || path.join(__dirname, "../workspace");
-const DB_PATH = path.join(__dirname, "../agent_mindmap.db");
+const PORT = 3001;
+const WORKSPACE_PATH = process.env.WORKSPACE_PATH || path.join(__dirname, '../test-workspace');
+const REASONING_TRACE_PATH = process.env.REASONING_TRACE_PATH || path.join(WORKSPACE_PATH, 'reasoning_trace.json');
+const DB_PATH = path.join(WORKSPACE_PATH, '.mindmap', 'agent_mindmap.db');
 
-// Ensure workspace directory exists
-if (!fs.existsSync(WORKSPACE_PATH)) {
-    console.log(`Creating workspace directory at: ${WORKSPACE_PATH}`);
-    fs.mkdirSync(WORKSPACE_PATH, { recursive: true });
+// Ensure DB directory exists
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
 }
 
-// Initialize Git State Manager
-const gitStateManager = new GitStateManager(WORKSPACE_PATH);
-gitStateManager.initialize().catch(console.error);
-
-// Create Express app
+// Initialize Express
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Agent State Tracking
-let agentState = {
-    status: 'IDLE', // IDLE | RUNNING | PAUSED | ROLLING_BACK
-    currentStep: null,
-    pauseRequested: false
-};
-
-// Helper: Message Deduplication
-async function checkAndRecordMessage(eventId, messageType) {
-    return new Promise((resolve, reject) => {
-        const db = new sqlite3.Database(DB_PATH);
-        db.get("SELECT message_id FROM processed_messages WHERE message_id = ?", [eventId], (err, row) => {
-            if (err) {
-                db.close();
-                return reject(err);
-            }
-            if (row) {
-                db.close();
-                return resolve(false); // Already processed
-            }
-
-            // Record it
-            db.run("INSERT INTO processed_messages (message_id, message_type, processed_at) VALUES (?, ?, ?)",
-                [eventId, messageType, new Date().toISOString()],
-                (insertErr) => {
-                    db.close();
-                    if (insertErr) return reject(insertErr);
-                    resolve(true); // New message
-                }
-            );
-        });
-    });
-}
-
-// ============================================
-// REST API ENDPOINTS
-// ============================================
-
-// Get all sessions
-app.get('/api/sessions', (req, res) => {
-    const db = new sqlite3.Database(DB_PATH);
-
-    db.all(`
-        SELECT s.session_id, s.parent_session_id, s.prompt, s.created_at, s.git_branch, s.base_commit_sha,
-               (SELECT COUNT(*) FROM node_executions WHERE session_id = s.session_id) as step_count
-        FROM sessions s
-        ORDER BY created_at DESC
-    `, [], (err, rows) => {
-        db.close();
-        if (err) {
-            console.error('Error fetching sessions:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(rows);
-    });
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"]
+    }
 });
 
-// Get all nodes for a specific session
-app.get('/api/sessions/:sessionId/nodes', (req, res) => {
-    const db = new sqlite3.Database(DB_PATH);
+// LangGraph Manager Helper
+const runLangGraph = (action, args = {}) => {
+    return new Promise((resolve, reject) => {
+        const pythonArgs = [
+            path.join(__dirname, 'langgraph_manager.py'),
+            action,
+            '--db', DB_PATH,
+            '--thread', 'main-thread' // Single thread for now
+        ];
 
-    db.all(`
-        SELECT id, node_name, parent_node_id, started_at, 
-               finished_at, state_update_json, output_text, commit_sha, step_id
-        FROM node_executions
-        WHERE session_id = ?
-        ORDER BY id ASC
-    `, [req.params.sessionId], (err, rows) => {
-        db.close();
-        if (err) {
-            console.error('Error fetching nodes:', err);
-            return res.status(500).json({ error: err.message });
+        if (args.step) pythonArgs.push('--step', args.step.toString());
+
+        const process = spawn('python3', pythonArgs);
+
+        // Write data to stdin if provided
+        if (args.data) {
+            process.stdin.write(JSON.stringify(args.data));
+            process.stdin.end();
         }
 
-        const nodes = rows.map(row => ({
-            id: row.id,
-            node_name: row.node_name,
-            parent_node_id: row.parent_node_id,
-            started_at: row.started_at,
-            finished_at: row.finished_at,
-            state: row.state_update_json ? JSON.parse(row.state_update_json) : {},
-            output: row.output_text,
-            commit_sha: row.commit_sha,
-            step_id: row.step_id
+        let output = '';
+        let error = '';
+
+        process.stdout.on('data', (data) => output += data.toString());
+        process.stderr.on('data', (data) => error += data.toString());
+
+        process.on('close', (code) => {
+            if (code !== 0) {
+                console.error(`LangGraph Error (${action}):`, error);
+                reject(new Error(error));
+            } else {
+                try {
+                    // Try to parse JSON if the output looks like JSON (for 'get')
+                    if (action === 'get') {
+                        resolve(JSON.parse(output));
+                    } else {
+                        resolve(output.trim());
+                    }
+                } catch (e) {
+                    resolve(output.trim());
+                }
+            }
+        });
+    });
+};
+
+// --- API Endpoints ---
+
+// Helper to run session scanner
+const scanSessions = () => {
+    return new Promise((resolve, reject) => {
+        const process = spawn('python3', [
+            path.join(__dirname, 'session_scanner.py'),
+            'list'
+        ]);
+
+        let output = '';
+        let error = '';
+
+        process.stdout.on('data', (data) => output += data.toString());
+        process.stderr.on('data', (data) => error += data.toString());
+
+        process.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(error));
+            } else {
+                try {
+                    resolve(JSON.parse(output));
+                } catch (e) {
+                    reject(e);
+                }
+            }
+        });
+    });
+};
+
+// Get session steps
+const getSessionSteps = (sessionId) => {
+    return new Promise((resolve, reject) => {
+        const process = spawn('python3', [
+            path.join(__dirname, 'session_scanner.py'),
+            'get-steps',
+            '--session-id', sessionId
+        ]);
+
+        let output = '';
+        let error = '';
+
+        process.stdout.on('data', (data) => output += data.toString());
+        process.stderr.on('data', (data) => error += data.toString());
+
+        process.on('close', (code) => {
+            if (code !== 0) {
+                reject(new Error(error));
+            } else {
+                try {
+                    resolve(JSON.parse(output));
+                } catch (e) {
+                    reject(e);
+                }
+            }
+        });
+    });
+};
+
+// Get All Sessions
+app.get('/api/sessions', async (req, res) => {
+    try {
+        const sessions = await scanSessions();
+        res.json(sessions);
+    } catch (error) {
+        console.error('Error scanning sessions:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Nodes (Steps) for a specific session
+app.get('/api/sessions/:id/nodes', async (req, res) => {
+    try {
+        const sessionId = req.params.id;
+        const steps = await getSessionSteps(sessionId);
+
+        // Transform to Node format expected by Frontend
+        const nodes = steps.map((step, index) => ({
+            id: index + 1,
+            node_name: step.decision || `Step ${step.step}`,
+            state: {
+                step: step.step,
+                thought: step.thought,
+                decision: step.decision,
+                file_examined: step.file_examined,
+                alternatives: step.alternatives_considered || [],
+                status: step.status
+            },
+            parent_node_id: index > 0 ? index : null,
+            step_id: step.step
         }));
 
         res.json(nodes);
-    });
-});
-
-// Get session details
-app.get('/api/sessions/:sessionId', (req, res) => {
-    const db = new sqlite3.Database(DB_PATH);
-
-    db.get(`
-        SELECT session_id, parent_session_id, prompt, created_at, git_branch, base_commit_sha
-        FROM sessions
-        WHERE session_id = ?
-    `, [req.params.sessionId], (err, row) => {
-        db.close();
-        if (err) {
-            console.error('Error fetching session:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        if (!row) {
-            return res.status(404).json({ error: 'Session not found' });
-        }
-        res.json(row);
-    });
-});
-
-// Create a branch from a checkpoint (Legacy REST endpoint, kept for compatibility)
-app.post('/api/sessions/:sessionId/branch', async (req, res) => {
-    // This should ideally use the WebSocket flow now, but keeping it for now.
-    // ... (Implementation omitted for brevity, assuming dashboard uses WebSocket for new branching)
-    res.status(501).json({ error: "Use WebSocket 'branch.create_requested' event instead" });
-});
-
-// Resume from checkpoint (prepare state for resumption)
-app.post('/api/sessions/:sessionId/resume', (req, res) => {
-    const { checkpoint_node_id } = req.body;
-    const sessionId = req.params.sessionId;
-
-    if (!checkpoint_node_id) {
-        return res.status(400).json({
-            error: 'Missing required field: checkpoint_node_id'
-        });
+    } catch (error) {
+        console.error('Error fetching session nodes:', error);
+        res.status(500).json({ error: error.message });
     }
-
-    const db = new sqlite3.Database(DB_PATH);
-
-    // Get all nodes up to and including the checkpoint
-    db.all(`
-        SELECT id, state_update_json
-        FROM node_executions
-        WHERE session_id = ? AND id <= ?
-        ORDER BY id ASC
-    `, [sessionId, checkpoint_node_id], (err, rows) => {
-        db.close();
-
-        if (err) {
-            console.error('Error fetching checkpoint state:', err);
-            return res.status(500).json({ error: err.message });
-        }
-
-        // Reconstruct state by applying all updates sequentially
-        let cumulativeState = {};
-        rows.forEach(row => {
-            if (row.state_update_json) {
-                const update = JSON.parse(row.state_update_json);
-                cumulativeState = { ...cumulativeState, ...update };
-            }
-        });
-
-        res.json({
-            session_id: sessionId,
-            checkpoint_node_id: checkpoint_node_id,
-            state: cumulativeState,
-            message: 'State reconstructed successfully'
-        });
-    });
 });
 
-// ============================================
-// START HTTP SERVER (Express + Socket.IO)
-// ============================================
-
-const httpServer = app.listen(3001, () => {
-    console.log("✓ API Server started on port 3001");
-    console.log(`  Workspace Path: ${WORKSPACE_PATH}`);
-    console.log("  Available endpoints:");
-    console.log("    GET  /api/sessions");
-    console.log("    GET  /api/sessions/:id");
-    console.log("    GET  /api/sessions/:id/nodes");
+// Rollback Endpoint
+app.post('/api/rollback', async (req, res) => {
+    const { step } = req.body;
+    try {
+        await runLangGraph('rollback', { step });
+        io.emit('refresh-sessions'); // Tell frontend to reload
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// Attach Socket.IO to the same HTTP server
-const io = new Server(httpServer, {
-    cors: { origin: "*" }
-});
-
-console.log("✓ WebSocket server attached to port 3001");
-
-// ============================================
-// WEBSOCKET LOGIC
-// ============================================
-
-const reasoningTracePath = process.env.REASONING_TRACE_PATH || path.join(__dirname, "../reasoning_trace.json");
-console.log(`✓ Watching for reasoning traces at: ${reasoningTracePath}`);
+// --- File Watcher ---
 
 let processedSteps = new Set();
-
-// Initial read
-if (fs.existsSync(reasoningTracePath)) {
-    try {
-        const content = fs.readFileSync(reasoningTracePath, "utf8");
-        const steps = JSON.parse(content);
-        steps.forEach(step => processedSteps.add(step.step));
-    } catch (e) {
-        console.error("Error reading initial reasoning trace:", e);
-    }
-}
-
-// Create reasoning trace file if it doesn't exist
-if (!fs.existsSync(reasoningTracePath)) {
-    console.log(`Creating empty reasoning trace file at: ${reasoningTracePath}`);
-    fs.writeFileSync(reasoningTracePath, '[]', 'utf8');
-}
-
-// Watch for changes
-// Debounced file watcher handler
 let isProcessing = false;
 
 const processFileChange = async () => {
     if (isProcessing) return;
     isProcessing = true;
 
-    const maxRetries = 5;
-    const baseDelay = 100;
-    let steps = null;
-
-    // Retry loop for reading and parsing JSON
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            const data = await fs.promises.readFile(reasoningTracePath, 'utf8');
-            if (!data.trim()) {
-                isProcessing = false;
-                return;
-            }
-            steps = JSON.parse(data);
-            break; // Success
-        } catch (error) {
-            if (error instanceof SyntaxError && attempt < maxRetries) {
-                const delay = baseDelay * attempt;
-                console.log(`JSON parse error (attempt ${attempt}/${maxRetries}), retrying in ${delay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-                console.error('Error reading/parsing reasoning trace:', error.message);
-                isProcessing = false;
-                return;
-            }
-        }
-    }
-
-    if (!steps) {
-        isProcessing = false;
-        return;
-    }
-
     try {
-        // Process through LangGraph when new steps appear
+        if (!fs.existsSync(REASONING_TRACE_PATH)) return;
+
+        const data = await fs.promises.readFile(REASONING_TRACE_PATH, 'utf8');
+        if (!data.trim()) return;
+
+        const steps = JSON.parse(data);
         const newSteps = steps.filter(step => !processedSteps.has(step.step));
 
         if (newSteps.length > 0) {
-            console.log(`Processing ${newSteps.length} new steps through LangGraph...`);
-            agentState.status = 'RUNNING';
-            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'RUNNING' }));
+            console.log(`Processing ${newSteps.length} new steps...`);
 
-            // Spawn Python process to run LangGraph
-            const pythonProcess = spawn("python3", [
-                path.join(__dirname, "langgraph_agent.py")
-            ], {
-                cwd: path.join(__dirname, "..") // Run from project root so it finds reasoning_trace.json
-            });
+            // Notify Dashboard: Running
+            io.emit('agent-status', { status: 'RUNNING' });
 
-            pythonProcess.stderr.on('data', (data) => {
-                console.error(`LangGraph Error: ${data}`);
-            });
+            for (const step of newSteps) {
+                if (!processedSteps.has(step.step)) {
+                    processedSteps.add(step.step);
 
-            pythonProcess.on('close', async (code) => {
-                console.log(`LangGraph processing completed with code ${code}`);
-                agentState.status = 'IDLE';
-                io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'IDLE' }));
+                    // Add to LangGraph
+                    await runLangGraph('add', { data: step });
 
-                // Now emit events to dashboard AND commit to git
-                for (const step of newSteps) {
-                    if (!processedSteps.has(step.step)) {
-                        processedSteps.add(step.step);
-
-                        // Commit to Git
-                        try {
-                            const stepId = require('crypto').randomUUID();
-                            const commitHash = await gitStateManager.createStepCommit(
-                                stepId,
-                                step.step,
-                                step.decision,
-                                step.thought,
-                                step.file_examined,
-                                { alternatives: step.alternatives_considered }
-                            );
-                            console.log(`✓ Committed step ${step.step}: ${commitHash}`);
-
-                            // Update DB with commit info
-                            const db = new sqlite3.Database(DB_PATH);
-                            db.run(`
-                                UPDATE node_executions 
-                                SET commit_sha = ?, step_id = ?
-                                WHERE id = (SELECT MAX(id) FROM node_executions)
-                            `, [commitHash, stepId], (err) => {
-                                if (err) console.error("DB Update Error:", err);
-                                db.close();
-                            });
-
-                            // Emit event
-                            const payload = {
-                                step: step.step,
-                                thought: step.thought,
-                                file: step.file_examined,
-                                decision: step.decision,
-                                alternatives: step.alternatives_considered,
-                                commitHash: commitHash,
-                                stepId: stepId
-                            };
-
-                            console.log(`Emitting step ${step.step}`);
-                            io.emit("agent-event", WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STEP_CREATED, payload));
-
-                        } catch (gitError) {
-                            console.error(`Failed to commit step ${step.step}:`, gitError);
-                            io.emit('agent-event', WebSocketProtocol.createError(null, 'GIT_COMMIT_FAILED', gitError.message));
-                        }
-                    }
+                    // Notify Dashboard: New Step
+                    io.emit('new-step', step);
                 }
-            });
+            }
+
+            // Notify Dashboard: Idle
+            io.emit('agent-status', { status: 'IDLE' });
         }
-    } catch (e) {
-        console.error("Error processing steps:", e);
+    } catch (error) {
+        console.error("Error processing file change:", error);
     } finally {
         isProcessing = false;
     }
 };
 
+// Start Watcher
 let fsWatcher;
 const startWatcher = () => {
     if (fsWatcher) {
@@ -369,171 +245,30 @@ const startWatcher = () => {
         }
     }
 
-    try {
-        if (!fs.existsSync(reasoningTracePath)) {
-            // If file doesn't exist yet, wait and try again
-            setTimeout(startWatcher, 1000);
-            return;
-        }
-
-        fsWatcher = fs.watch(reasoningTracePath, (eventType) => {
-            // console.log(`File event: ${eventType}`);
-            if (eventType === 'rename') {
-                // File was replaced (atomic write) or deleted.
-                // Wait briefly for the new file to settle, then re-watch and process.
-                setTimeout(() => {
-                    startWatcher();
-                    processFileChange();
-                }, 100);
-            } else {
-                processFileChange();
-            }
-        });
-        console.log("✓ File watcher (re)started");
-    } catch (e) {
-        console.error("Error starting watcher:", e);
+    if (!fs.existsSync(REASONING_TRACE_PATH)) {
         setTimeout(startWatcher, 1000);
+        return;
     }
+
+    fsWatcher = fs.watch(REASONING_TRACE_PATH, (eventType) => {
+        if (eventType === 'rename') {
+            setTimeout(() => {
+                startWatcher();
+                processFileChange();
+            }, 100);
+        } else {
+            processFileChange();
+        }
+    });
+    console.log("✓ File watcher started");
 };
 
 startWatcher();
 
-io.on("connection", (socket) => {
-    console.log("Dashboard connected");
-
-    // Handle Rollback Request
-    socket.on(WebSocketProtocol.EVENT_TYPES.ROLLBACK_REQUESTED, async (message) => {
-        console.log(`Received rollback request:`, message);
-
-        try {
-            WebSocketProtocol.validate(message);
-
-            // Deduplication
-            const isNew = await checkAndRecordMessage(message.event_id, WebSocketProtocol.EVENT_TYPES.ROLLBACK_REQUESTED);
-            if (!isNew) {
-                console.log(`Duplicate rollback request ${message.event_id} ignored.`);
-                return;
-            }
-
-            const { commitHash } = message.payload;
-
-            agentState.status = 'ROLLING_BACK';
-            agentState.pauseRequested = true;
-            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'ROLLING_BACK' }));
-
-            // Perform Git Rollback
-            const result = await gitStateManager.rollbackToCommit(commitHash);
-
-            // Reset processed steps to match rollback state (simplification)
-            // In a real app, we'd need to query the DB/Git to see what steps remain
-            // For now, we might need to restart the agent or clear processedSteps partially
-
-            // Emit completion
-            socket.emit('agent-event', WebSocketProtocol.createMessage(
-                WebSocketProtocol.EVENT_TYPES.ROLLBACK_COMPLETED,
-                {
-                    success: true,
-                    commitHash,
-                    backupBranch: result.backupBranch
-                },
-                message.event_id
-            ));
-
-            agentState.status = 'IDLE';
-            agentState.pauseRequested = false;
-            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'IDLE' }));
-
-        } catch (error) {
-            console.error("Rollback failed:", error);
-            socket.emit('agent-event', WebSocketProtocol.createError(message, 'ROLLBACK_FAILED', error.message));
-            agentState.status = 'IDLE'; // Reset to IDLE on error
-        }
-    });
-
-    // Handle Branch Creation Request
-    socket.on(WebSocketProtocol.EVENT_TYPES.BRANCH_REQUESTED, async (message) => {
-        console.log(`Received branch request:`, message);
-
-        try {
-            WebSocketProtocol.validate(message);
-
-            // Deduplication
-            const isNew = await checkAndRecordMessage(message.event_id, WebSocketProtocol.EVENT_TYPES.BRANCH_REQUESTED);
-            if (!isNew) {
-                console.log(`Duplicate branch request ${message.event_id} ignored.`);
-                return;
-            }
-
-            const { name, fromCommitHash, parentSessionId } = message.payload;
-
-            const branchName = await gitStateManager.createTimeline(fromCommitHash, name);
-
-            // Create new session in DB
-            const newSessionId = require('crypto').randomUUID();
-            const createdAt = new Date().toISOString();
-
-            const db = new sqlite3.Database(DB_PATH);
-            db.run(`
-                INSERT INTO sessions (session_id, parent_session_id, prompt, created_at, git_branch, base_commit_sha)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `, [newSessionId, parentSessionId, `Branch: ${name}`, createdAt, branchName, fromCommitHash], (err) => {
-                db.close();
-                if (err) {
-                    console.error("Database error creating session:", err);
-                    socket.emit('agent-event', WebSocketProtocol.createError(message, 'DB_ERROR', err.message));
-                    return;
-                }
-
-                // Emit success
-                socket.emit('agent-event', WebSocketProtocol.createMessage(
-                    WebSocketProtocol.EVENT_TYPES.BRANCH_CREATED,
-                    {
-                        sessionId: newSessionId,
-                        branchName: branchName,
-                        name: name
-                    },
-                    message.event_id
-                ));
-            });
-
-        } catch (error) {
-            console.error("Branch creation failed:", error);
-            socket.emit('agent-event', WebSocketProtocol.createError(message, 'BRANCH_FAILED', error.message));
-        }
-    });
-
-    // Handle Pause Request
-    socket.on(WebSocketProtocol.EVENT_TYPES.PAUSE_REQUESTED, async (message) => {
-        console.log(`Received pause request:`, message);
-        try {
-            WebSocketProtocol.validate(message);
-            agentState.pauseRequested = true;
-            agentState.status = 'PAUSED';
-            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'PAUSED' }));
-        } catch (error) {
-            console.error("Pause failed:", error);
-        }
-    });
-
-    // Handle Resume Request
-    socket.on(WebSocketProtocol.EVENT_TYPES.RESUME_REQUESTED, async (message) => {
-        console.log(`Received resume request:`, message);
-        try {
-            WebSocketProtocol.validate(message);
-            agentState.pauseRequested = false;
-            agentState.status = 'RUNNING'; // Or IDLE depending on if there are steps? For now, assume running or idle will be handled by the loop.
-            // Actually, if we resume, we should probably check if there are pending steps or just set to IDLE if nothing is happening.
-            // But if we were paused mid-processing, we might want to resume processing.
-            // For this simple implementation, we'll just set status to IDLE (ready for new steps) or RUNNING if we were in the middle of something (not tracked deeply here yet).
-            // Let's just set to IDLE for now as the file watcher will pick up changes if any.
-            agentState.status = 'IDLE';
-            io.emit('agent-event', WebSocketProtocol.createMessage(WebSocketProtocol.EVENT_TYPES.STATUS_CHANGED, { status: 'IDLE' }));
-        } catch (error) {
-            console.error("Resume failed:", error);
-        }
-    });
-
-    socket.on("disconnect", () => {
-        console.log("Dashboard disconnected");
-    });
+// Start Server
+server.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`📂 Workspace: ${WORKSPACE_PATH}`);
+    console.log(`📝 Trace: ${REASONING_TRACE_PATH}`);
+    console.log(`💾 DB: ${DB_PATH}`);
 });

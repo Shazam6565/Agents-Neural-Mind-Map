@@ -20,7 +20,7 @@ if [ -z "$1" ]; then
 fi
 
 PROJECT_PATH="$1"
-PROJECT_NAME="${2:-$(basename $PROJECT_PATH)}"
+PROJECT_NAME="${2:-$(basename "$PROJECT_PATH")}"
 
 # Validate project path exists
 if [ ! -d "$PROJECT_PATH" ]; then
@@ -62,6 +62,20 @@ echo "   API Server will be available at: http://localhost:3001"
 echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
+
+# Start the Brain Monitor in the background
+echo "🧠 Starting Brain Monitor for $PROJECT_NAME..."
+./start-brain-monitor.sh "$REASONING_TRACE_PATH" "$PROJECT_NAME" &
+MONITOR_PID=$!
+
+# Function to kill monitor on exit
+cleanup() {
+    echo ""
+    echo "🛑 Stopping services..."
+    kill $MONITOR_PID
+    exit
+}
+trap cleanup SIGINT
 
 # Run the server with environment variables
 WORKSPACE_PATH="$WORKSPACE_PATH" \

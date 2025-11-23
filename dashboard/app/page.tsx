@@ -12,6 +12,41 @@ export default function Home() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<string>('IDLE');
 
+  // Agent Control Handlers
+  const handlePause = async () => {
+    try {
+      await fetch('http://localhost:3001/api/agent/pause', { method: 'POST' });
+    } catch (error) {
+      console.error('Failed to pause agent:', error);
+    }
+  };
+
+  const handleResume = async () => {
+    try {
+      await fetch('http://localhost:3001/api/agent/resume', { method: 'POST' });
+    } catch (error) {
+      console.error('Failed to resume agent:', error);
+    }
+  };
+
+  const handleRollback = async (step: number) => {
+    if (!currentSessionId) return;
+    try {
+      setAgentStatus('ROLLING_BACK');
+      await fetch('http://localhost:3001/api/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: currentSessionId, step })
+      });
+      // Reload the session
+      await loadSessionNodes(currentSessionId);
+      setAgentStatus('IDLE');
+    } catch (error) {
+      console.error('Failed to rollback:', error);
+      setAgentStatus('IDLE');
+    }
+  };
+
   // Load session nodes when a session is selected
   const loadSessionNodes = useCallback(async (sessionId: string) => {
     try {
@@ -36,10 +71,12 @@ export default function Home() {
           thought: node.state.thought || '',
           decision: node.state.decision || '',
           file: node.state.file_examined || '',
+          files_modified: node.state.files_modified || [],
           alternatives: node.state.alternatives || [],
-          commit_sha: node.commit_sha || null, // Add commit SHA for rollback
+          status: node.state.status,
+          commit_sha: node.commit_sha || null,
           step_id: node.step_id || null,
-          isBranch: node.parent_node_id !== null && index === 0 // Simple heuristic for branch start
+          isBranch: node.parent_node_id !== null && index === 0
         }
       }));
 
@@ -143,6 +180,41 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Control Bar */}
+      {currentSessionId && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+          <div className="flex items-center gap-2 px-4 py-2 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full shadow-2xl">
+            <button
+              onClick={handlePause}
+              disabled={agentStatus === 'PAUSED'}
+              className="px-4 py-1.5 bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/50 
+                       rounded-full text-xs font-bold text-yellow-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              ⏸ PAUSE
+            </button>
+            <button
+              onClick={handleResume}
+              disabled={agentStatus === 'RUNNING'}
+              className="px-4 py-1.5 bg-green-500/20 hover:bg-green-500/30 border border-green-500/50 
+                       rounded-full text-xs font-bold text-green-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              ▶ RESUME
+            </button>
+            <div className="w-px h-6 bg-white/10" />
+            <button
+              onClick={() => {
+                const step = prompt('Rollback to step number:');
+                if (step) handleRollback(parseInt(step));
+              }}
+              className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 
+                       rounded-full text-xs font-bold text-red-200 transition-all"
+            >
+              ↩ ROLLBACK
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="relative z-10 flex h-full w-full pt-4"> {/* Added pt-4 to account for banner if needed, or just let it overlay */}
         <SessionHistory

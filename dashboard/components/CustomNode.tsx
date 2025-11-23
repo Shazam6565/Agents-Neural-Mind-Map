@@ -2,12 +2,28 @@ import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { Brain, Terminal, FileCode, CheckCircle, GitBranch } from 'lucide-react';
 
-const CustomNode = ({ data, selected }: NodeProps) => {
-    // Determine icon based on content
+interface CustomNodeData {
+    label: string;
+    step: number;
+    thought: string;
+    decision: string;
+    file: string;
+    alternatives: string[];
+    isBranch?: boolean;
+}
+
+const CustomNode = ({ data, selected }: NodeProps<CustomNodeData>) => {
+    // Determine icon based on node type
     const getIcon = () => {
-        if (data.decision) return <CheckCircle className="w-4 h-4 text-green-400" />;
-        if (data.file) return <FileCode className="w-4 h-4 text-blue-400" />;
-        if (data.thought && data.thought.toLowerCase().includes('tool')) return <Terminal className="w-4 h-4 text-orange-400" />;
+        if (data.thought && data.thought.toLowerCase().includes('tool')) {
+            return <Terminal className="w-4 h-4 text-orange-400" />;
+        }
+        if (data.file && data.file.toLowerCase().includes('file')) {
+            return <FileCode className="w-4 h-4 text-green-400" />;
+        }
+        if (data.decision && data.decision.toLowerCase().includes('verified')) {
+            return <CheckCircle className="w-4 h-4 text-blue-400" />;
+        }
         return <Brain className="w-4 h-4 text-purple-400" />;
     };
 
