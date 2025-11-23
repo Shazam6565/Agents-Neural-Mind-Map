@@ -1,2 +1,2 @@
 # Agents-Neural-Mind-Map
-A Mind Map generation tool that visualizes AI agent reasoning, decision-making, and codebase exploration in real-time during code generation tasks.
+A comprehensive mind map generation tool designed to provide deep insights into the operational dynamics of AI agents. This project visualizes the intricate processes of AI agent reasoning, decision-making pathways, and their exploration of codebases. By presenting this information in real-time through an interactive mind map, it aims to enhance transparency, facilitate debugging, and ultimately improve the development and understanding of complex AI systems engaged in code generation tasks.
