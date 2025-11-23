@@ -37,26 +37,30 @@ export default function Home() {
           decision: node.state.decision || '',
           file: node.state.file_examined || '',
           alternatives: node.state.alternatives || [],
+          commit_sha: node.commit_sha || null, // Add commit SHA for rollback
+          step_id: node.step_id || null,
           isBranch: node.parent_node_id !== null && index === 0 // Simple heuristic for branch start
         }
       }));
 
-      const flowEdges: Edge[] = nodeData
-        .filter((node: any) => node.parent_node_id !== null)
-        .map((node: any) => ({
-          id: `e${node.parent_node_id}-${node.id}`,
-          source: node.parent_node_id.toString(),
-          target: node.id.toString(),
+      // Create edges: Connect nodes sequentially based on step order
+      const flowEdges: Edge[] = [];
+      for (let i = 0; i < flowNodes.length - 1; i++) {
+        flowEdges.push({
+          id: `e${flowNodes[i].id}-${flowNodes[i + 1].id}`,
+          source: flowNodes[i].id,
+          target: flowNodes[i + 1].id,
           type: 'smoothstep',
           animated: true,
           style: { stroke: '#3b82f6', strokeWidth: 2 }
-        }));
+        });
+      }
 
       setNodes(flowNodes);
       setEdges(flowEdges);
       setCurrentSessionId(sessionId);
 
-      console.log(`Loaded session ${sessionId}: ${flowNodes.length} nodes`);
+      console.log(`Loaded session ${sessionId}: ${flowNodes.length} nodes, ${flowEdges.length} edges`);
 
     } catch (error) {
       console.error('Error loading session nodes:', error);
