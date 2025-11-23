@@ -1,9 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useNodesState, useEdgesState, Node, Edge } from 'reactflow';
-import SessionHistory from '@/components/SessionHistory';
+import { useCallback, useEffect, useState } from 'react';
+import { ReactFlowProvider, Node, Edge, useNodesState, useEdgesState } from 'reactflow';
+import 'reactflow/dist/style.css';
 import MindMap from '@/components/MindMap';
+import SessionHistory from '@/components/SessionHistory';
+import MindMapControls from '@/components/MindMapControls';
+import { useAgentSocket } from '@/hooks/useAgentSocket';
+import { RollbackModal } from '@/components/RollbackModal';
 import { Brain } from 'lucide-react';
 
 export default function Home() {
@@ -11,6 +15,24 @@ export default function Home() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<string>('IDLE');
+  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
+  const [isRollbackModalOpen, setRollbackModalOpen] = useState(false);
+
+  // WebSocket connection
+  const { agentStatus: wsAgentStatus, lastUpdate, isConnected } = useAgentSocket(currentSessionId || 'main-thread');
+
+  // Update agent status from WebSocket
+  useEffect(() => {
+    setAgentStatus(wsAgentStatus);
+  }, [wsAgentStatus]);
+
+  // Handle state updates from WebSocket
+  useEffect(() => {
+    if (lastUpdate && currentSessionId) {
+      console.log('Reloading session due to state update...');
+      loadSessionNodes(currentSessionId);
+    }
+  }, [lastUpdate, currentSessionId]);
 
   // Agent Control Handlers
   const handlePause = async () => {
@@ -29,7 +51,15 @@ export default function Home() {
     }
   };
 
-  const handleRollback = async (step: number) => {
+  // Deprecated: rollback handled via modal and confirmRollback
+
+
+  // Updated Rollback button handler to open modal
+  const handleRollbackClick = () => {
+    setRollbackModalOpen(true);
+  };
+
+  const confirmRollback = async (step: number) => {
     if (!currentSessionId) return;
     try {
       setAgentStatus('ROLLING_BACK');
@@ -38,12 +68,13 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: currentSessionId, step })
       });
-      // Reload the session
-      await loadSessionNodes(currentSessionId);
       setAgentStatus('IDLE');
+      await loadSessionNodes(currentSessionId);
     } catch (error) {
       console.error('Failed to rollback:', error);
+    } finally {
       setAgentStatus('IDLE');
+      setRollbackModalOpen(false);
     }
   };
 
@@ -116,35 +147,7 @@ export default function Home() {
     return () => window.removeEventListener('refresh-sessions', handleRefresh);
   }, []);
 
-  // Listen for agent status changes via WebSocket
-  useEffect(() => {
-    // We need to access the socket instance. Since it's not globally available here, 
-    // we might need to rely on a global event or a context.
-    // For this phase, let's assume we can listen to a custom event dispatched by a global socket listener 
-    // or we can just poll/connect here. 
-    // Ideally, we should have a SocketContext. 
-    // But given the current structure, let's add a simple socket listener here or assume the socket is managed elsewhere.
-    // Wait, the previous code didn't have a socket connection in page.tsx. 
-    // Let's add a simple socket connection here for status updates.
-
-    // Dynamic import to avoid SSR issues with socket.io-client if needed, but standard import is usually fine in useEffect
-    const io = require('socket.io-client');
-    const socket = io('http://localhost:3001');
-
-    socket.on('connect', () => {
-      console.log('Dashboard connected to WebSocket');
-    });
-
-    socket.on('agent-event', (message: any) => {
-      if (message.event_type === 'agent.status_changed') {
-        setAgentStatus(message.payload.status);
-      }
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
+  // WebSocket connection is handled by useAgentSocket hook
 
   return (
     <div className="flex h-screen bg-[#0a0a0f] text-white overflow-hidden font-sans selection:bg-blue-500/30">
@@ -203,10 +206,7 @@ export default function Home() {
             </button>
             <div className="w-px h-6 bg-white/10" />
             <button
-              onClick={() => {
-                const step = prompt('Rollback to step number:');
-                if (step) handleRollback(parseInt(step));
-              }}
+              onClick={handleRollbackClick}
               className="px-4 py-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 
                        rounded-full text-xs font-bold text-red-200 transition-all"
             >
@@ -230,6 +230,12 @@ export default function Home() {
               edges={edges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
+              onNodeClick={(nodeId) => {
+                const node = nodes.find(n => n.id === nodeId);
+                if (node) {
+                  setSelectedNodeId(node.data.step);
+                }
+              }}
             />
           ) : (
             <div className="flex items-center justify-center h-full">
@@ -248,6 +254,14 @@ export default function Home() {
           )}
         </div>
       </div>
+      {/* Render RollbackModal */}
+      {isRollbackModalOpen && (
+        <RollbackModal
+          isOpen={isRollbackModalOpen}
+          onClose={() => setRollbackModalOpen(false)}
+          onConfirm={confirmRollback}
+        />
+      )}
     </div>
   );
 }

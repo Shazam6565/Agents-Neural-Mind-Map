@@ -36,54 +36,76 @@ class SessionScanner:
         return sessions
     
     def get_session_info(self, session_path: Path) -> Optional[Dict]:
-        """Extract session metadata"""
+        """Extract session metadata with improved project name detection"""
         task_file = session_path / 'task.md'
         plan_file = session_path / 'implementation_plan.md'
         
         # Get last modified time
         mtime = session_path.stat().st_mtime
         
-        # Try to extract project info from artifacts
+        # Try to extract project info
         project_name = "Unknown Project"
         step_count = 0
         files_modified = []
         
-        # Strategy 1: Look in implementation_plan.md for file paths
-        if plan_file.exists():
-            try:
-                with open(plan_file, 'r') as f:
-                    content = f.read()
-                    # Look for markdown links with file:// protocol
-                    file_links = re.findall(r'file:///[^)]+/([^/]+)/([^)]+)', content)
-                    if file_links:
-                        # Get the project directory name (second to last component)
-                        project_dirs = set([parts[0] for parts in file_links])
-                        if project_dirs:
-                            project_name = list(project_dirs)[0]
-                    
-                    # Also look for regular paths
-                    if project_name == "Unknown Project":
-                        paths = re.findall(r'/Users/[^/]+/[^/]+/([^/\s]+)', content)
-                        if paths:
-                            project_name = paths[0]
-            except Exception as e:
-                pass
+        # Strategy 1: Look for file:// links across all artifacts
+        all_paths = []
         
-        # Strategy 2: Check task.md
-        if task_file.exists() and project_name == "Unknown Project":
+        for artifact_file in [plan_file, task_file]:
+            if artifact_file.exists():
+                try:
+                    with open(artifact_file, 'r') as f:
+                        content = f.read()
+                        
+                        # Extract from file:// protocol links
+                        # Pattern: file:///path/to/Project-Name/file.ext
+                        file_links = re.findall(r'file:///[^)]+?/([^/]+)/[^/)]+\.[a-z]+', content, re.IGNORECASE)
+                        all_paths.extend(file_links)
+                        
+                        # Extract from regular paths
+                        # Pattern: /path/Desktop/Project-Name/file.ext or similar
+                        regular_paths = re.findall(r'/(?:Desktop|Documents|Projects)/([^/\s]+)/', content)
+                        all_paths.extend(regular_paths)
+                        
+                        # Extract from workspace mentions
+                        workspace_paths = re.findall(r'workspace:\s*([^\s]+)', content, re.IGNORECASE)
+                        all_paths.extend([Path(p).name for p in workspace_paths])
+                        
+                except Exception as e:
+                    pass
+        
+        # Find most common path (likely the project)
+        if all_paths:
+            # Filter out common non-project names
+            filtered_paths = [p for p in all_paths if p not in ['Users', 'home', 'tmp', 'Desktop', 'Documents']]
+            if filtered_paths:
+                from collections import Counter
+                most_common = Counter(filtered_paths).most_common(1)[0][0]
+                project_name = most_common
+        
+        # Strategy 2: Check task.md header
+        if project_name == "Unknown Project" and task_file.exists():
             try:
                 with open(task_file, 'r') as f:
                     content = f.read()
-                    # Look for project mentions in headers or first line
-                    first_line = content.split('\n')[0] if content else ""
-                    if first_line.startswith('#'):
-                        # Extract from header
-                        header_text = first_line.strip('# ').strip()
-                        # Common patterns: "Project: Name" or just "Name"
-                        if ':' in header_text:
-                            project_name = header_text.split(':')[1].strip()
-                        else:
-                            project_name = header_text
+                    lines = content.split('\n')
+                    
+                    # Check first few lines for headers
+                    for line in lines[:5]:
+                        if line.startswith('#'):
+                            header = line.strip('#').strip()
+                            # Extract project name from headers like "Project: Name" or "Name - Description"
+                            if ':' in header:
+                                project_name = header.split(':')[-1].strip()
+                                break
+                            elif '-' in header:
+                                project_name = header.split('-')[0].strip()
+                                break
+                            else:
+                                # Use the header itself if it's not too long
+                                if len(header) < 50 and header != "Unknown Project":
+                                    project_name = header
+                                    break
                     
                     # Count tasks
                     step_count = content.count('- [')
@@ -93,12 +115,19 @@ class SessionScanner:
             except Exception as e:
                 print(f"Error reading {task_file}: {e}")
         
+        # Fallback: Use session directory name if it looks like a meaningful name
+        if project_name == "Unknown Project":
+            session_name = session_path.name
+            # If it's a UUID-like string, keep it as Unknown
+            if not re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-', session_name):
+                project_name = session_name
+        
         return {
             'session_id': session_path.name,
             'project_name': project_name,
             'last_modified': datetime.fromtimestamp(mtime).isoformat(),
             'step_count': step_count,
-            'files_modified': files_modified[:10],  # Limit to first 10 files
+            'files_modified': files_modified[:10],
             'path': str(session_path)
         }
     

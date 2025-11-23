@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { v4 as uuidv4 } from 'uuid';
 
-type EventHandler = (payload: any) => void;
+type EventHandler = (payload: unknown) => void;
 
 export class WebSocketClient {
     private static instance: WebSocketClient;
@@ -52,7 +52,8 @@ export class WebSocketClient {
         this.eventHandlers.get(eventType)?.push(handler);
     }
 
-    public emit(eventType: string, payload: any): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    public emit(eventType: string, payload: unknown): void {
         if (!this.socket) {
             console.error('WebSocket not connected');
             return;
@@ -68,19 +69,20 @@ export class WebSocketClient {
         this.socket.emit(eventType, message);
     }
 
-    private handleIncomingMessage(message: any): void {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private handleIncomingMessage(message: unknown): void {
         // Basic validation
-        if (!message || !message.event_id || !message.event_type) {
+        if (!message || typeof message !== 'object' || !(message as any).event_id || !(message as any).event_type) {
             console.warn('Received invalid message format:', message);
             return;
         }
-
+        const msg = message as any;
         // Deduplication
-        if (this.processedEventIds.has(message.event_id)) {
-            console.debug(`Duplicate event ignored: ${message.event_id}`);
+        if (this.processedEventIds.has(msg.event_id)) {
+            console.debug(`Duplicate event ignored: ${msg.event_id}`);
             return;
         }
-        this.processedEventIds.add(message.event_id);
+        this.processedEventIds.add(msg.event_id);
 
         // Limit set size to prevent memory leaks
         if (this.processedEventIds.size > 1000) {
@@ -92,13 +94,13 @@ export class WebSocketClient {
         }
 
         // Dispatch to handlers
-        const handlers = this.eventHandlers.get(message.event_type);
+        const handlers = this.eventHandlers.get(msg.event_type);
         if (handlers) {
             handlers.forEach(handler => {
                 try {
-                    handler(message.payload);
+                    handler(msg.payload);
                 } catch (e) {
-                    console.error(`Error in handler for ${message.event_type}:`, e);
+                    console.error(`Error in handler for ${msg.event_type}:`, e);
                 }
             });
         }

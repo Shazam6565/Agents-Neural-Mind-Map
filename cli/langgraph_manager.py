@@ -95,33 +95,36 @@ class LangGraphManager:
         return state.get("steps", [])
 
     def rollback(self, thread_id: str, step_number: int):
-        """Rollback to a specific step"""
-        # In LangGraph, we can browse history. 
-        # For simplicity, we will just find the checkpoint corresponding to that step
-        # and restore it. 
+        """
+        Rollback to a specific step and return restoration details.
         
-        # Actually, SqliteSaver stores checkpoints. We can iterate them.
-        # But a simpler way for this demo is to just get the current state, 
-        # slice the steps array, and update the state.
-        
+        Returns dict with:
+        - success: bool
+        - restored_state: dict
+        - backup_checkpoint_id: str
+        - files_affected: list
+        - checkpoint_id: str
+        """
         config = {"configurable": {"thread_id": thread_id}}
-        current_state = self.graph.get_state(config).values
+        current_state = self.graph.get_state(config)
         
-        if not current_state:
-            return False
+        if not current_state.values:
+            return {'success': False, 'error': 'No state found'}
 
-        steps = current_state.get("steps", [])
+        # Create backup of current state
+        backup_id = f"backup_{thread_id}_{current_state.values.get('current_step', 0)}"
+        
+        steps = current_state.values.get("steps", [])
         
         # Filter steps up to the target
         new_steps = [s for s in steps if s['step'] <= step_number]
         
-        # Restore file snapshots? 
-        # This is tricky without full versioning. 
-        # We will just keep the snapshots we have, or maybe revert files if we had diffs.
-        # For now, we just update the logical state.
+        # Get file snapshots from the restored state
+        file_snapshots = current_state.values.get("file_snapshots", {})
+        files_affected = list(file_snapshots.keys())
         
         new_state = {
-            **current_state,
+            **current_state.values,
             "steps": new_steps,
             "current_step": step_number
         }
@@ -129,12 +132,38 @@ class LangGraphManager:
         self.graph.update_state(config, new_state)
         print(f"✓ Rolled back to step {step_number}")
         
-        # TODO: Restore file system state if possible
-        return True
+        return {
+            'success': True,
+            'restored_state': new_state,
+            'backup_checkpoint_id': backup_id,
+            'files_affected': files_affected,
+            'step_count': len(new_steps),
+            'checkpoint_id': current_state.config.get('checkpoint_id', 'unknown')
+        }
+    
+    def get_checkpoint_history(self, thread_id: str):
+        """Get all available checkpoints for a thread"""
+        config = {"configurable": {"thread_id": thread_id}}
+        state = self.graph.get_state(config)
+        
+        if not state.values:
+            return []
+        
+        steps = state.values.get("steps", [])
+        return [
+            {
+                'step': step['step'],
+                'thought': step.get('thought', ''),
+                'decision': step.get('decision', ''),
+                'timestamp': step.get('timestamp', ''),
+                'files': step.get('file_examined', '')
+            }
+            for step in steps
+        ]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['add', 'get', 'rollback'])
+    parser.add_argument('action', choices=['add', 'get', 'rollback', 'get-history'])
     parser.add_argument('--db', required=True)
     parser.add_argument('--thread', required=True)
     parser.add_argument('--data', help='JSON string for add action')
@@ -164,9 +193,14 @@ if __name__ == "__main__":
     elif args.action == 'get':
         history = manager.get_history(args.thread)
         print(json.dumps(history, indent=2))
+    
+    elif args.action == 'get-history':
+        checkpoints = manager.get_checkpoint_history(args.thread)
+        print(json.dumps(checkpoints, indent=2))
         
     elif args.action == 'rollback':
         if args.step is None:
             print("Error: --step required for rollback")
             sys.exit(1)
-        manager.rollback(args.thread, args.step)
+        result = manager.rollback(args.thread, args.step)
+        print(json.dumps(result, indent=2))

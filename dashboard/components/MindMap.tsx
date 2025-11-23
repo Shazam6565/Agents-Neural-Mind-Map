@@ -22,8 +22,9 @@ interface MindMapProps {
     currentSessionId: string | null;
     nodes: Node[];
     edges: Edge[];
-    onNodesChange: any;
-    onEdgesChange: any;
+    onNodesChange: (changes: any) => void;
+    onEdgesChange: (changes: any) => void;
+    onNodeClick?: (nodeId: string) => void;
 }
 
 const nodeTypes = {
@@ -69,12 +70,24 @@ export default function MindMap({
     nodes: initialNodes,
     edges: initialEdges,
     onNodesChange,
-    onEdgesChange
+    onEdgesChange,
+    onNodeClick
 }: MindMapProps) {
 
     const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-    const [layoutedNodes, setLayoutedNodes] = useState<Node[]>([]);
-    const [layoutedEdges, setLayoutedEdges] = useState<Edge[]>([]);
+    // Apply dagre layout
+    const { nodes: layoutedNodes, edges: layoutedEdges } = useMemo(() =>
+        getLayoutedElements(initialNodes.map(n => ({ ...n, type: 'custom' })), initialEdges),
+        [initialNodes, initialEdges]
+    );
+
+    // Node click handler - call the parent's onNodeClick prop if provided
+    const handleNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+        setSelectedNode(node);
+        if (onNodeClick) {
+            onNodeClick(node.id);
+        }
+    }, [onNodeClick]);
     const [isRollingBack, setIsRollingBack] = useState(false);
 
     // WebSocket Integration
@@ -109,21 +122,6 @@ export default function MindMap({
         });
 
     }, [currentSessionId]);
-
-    // Apply layout whenever nodes or edges change
-    useEffect(() => {
-        const { nodes: lNodes, edges: lEdges } = getLayoutedElements(
-            initialNodes.map(n => ({ ...n, type: 'custom' })), // Force custom type
-            initialEdges
-        );
-        setLayoutedNodes(lNodes);
-        setLayoutedEdges(lEdges);
-    }, [initialNodes, initialEdges]);
-
-    // Handle node click just for selection
-    const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-        setSelectedNode(node);
-    }, []);
 
     // Handle branch creation
     const handleBranch = async () => {
@@ -176,7 +174,7 @@ export default function MindMap({
                 edges={layoutedEdges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
-                onNodeClick={onNodeClick}
+                onNodeClick={handleNodeClick}
                 nodeTypes={nodeTypes}
                 fitView
                 className="bg-[#0a0a0f]"

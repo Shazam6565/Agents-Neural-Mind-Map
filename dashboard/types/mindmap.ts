@@ -27,7 +27,7 @@ export interface MindMapNode {
         timestamp: string;
         type: NodeType;
         details: string;
-        metadata?: any;
+        metadata?: unknown;
     };
 }
 
