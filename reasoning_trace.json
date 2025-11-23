@@ -36,5 +36,39 @@
         "alternatives_considered": [
             "Import and test function"
         ]
+    },
+    {
+        "step": 5,
+        "thought": "Plan the file watcher implementation.",
+        "file_examined": "cli/server.js",
+        "decision": "Use fs.watch and read the full file on change to ensure valid JSON parsing.",
+        "alternatives_considered": [
+            "Tail the file (harder with JSON array)",
+            "Use chokidar (external dependency, avoid if possible)"
+        ]
+    },
+    {
+        "step": 6,
+        "thought": "Implement the file watcher in cli/server.js.",
+        "file_examined": "cli/server.js",
+        "decision": "Added fs.watch, implemented logic to only emit new steps using a Set to track processed IDs.",
+        "alternatives_considered": [
+            "Emit all steps every time (inefficient for client)",
+            "Read last line only (unreliable for JSON array)"
+        ]
+    },
+    {
+        "step": 7,
+        "thought": "Verify the file watcher.",
+        "file_examined": "reasoning_trace.json",
+        "decision": "Restarted server and appended this step to trigger the watcher.",
+        "alternatives_considered": []
+    },
+    {
+        "step": 8,
+        "thought": "Verify the file watcher (attempt 2).",
+        "file_examined": "reasoning_trace.json",
+        "decision": "Appended this step AFTER server start to ensure watcher picks it up.",
+        "alternatives_considered": []
     }
 ]
