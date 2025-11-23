@@ -7,100 +7,32 @@
     GET  /api/sessions/:id
     GET  /api/sessions/:id/nodes
 Dashboard connected
-Dashboard connected
-Processing 1 new steps through LangGraph...
-Dashboard connected
-Processing 1 new steps through LangGraph...
-LangGraph Error: Traceback (most recent call last):
-  File "/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/langgraph_agent.py", line 242, in <module>
-
-LangGraph Error:     session_id, results = agent.process_reasoning_trace()
-                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/langgraph_agent.py", line 234, in process_reasoning_trace
-    result = self.graph.invoke(state, config)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/pregel/main.py", line 3050, in invoke
-
-LangGraph Error:     for chunk in self.stream(
-  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/pregel/main.py", line 2633, in stream
-
-LangGraph Error:     for _ in runner.tick(
-
-LangGraph Error:   File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/pregel/_runner.py", line 167, in tick
-
-LangGraph Error:     run_with_retry(
-
-LangGraph Error:   File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/pregel/_retry.py", line 42, in run_with_retry
-
-LangGraph Error:     return task.proc.invoke(task.input, config)
-
-LangGraph Error:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-LangGraph Error:   File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/_internal/_runnable.py", line 656, in invoke
-
-LangGraph Error:     input = context.run(step.invoke, input, config, **kwargs)
-
-LangGraph Error:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/langgraph/_internal/_runnable.py", line 400, in invoke
-
-LangGraph Error:     ret = self.func(*args, **kwargs)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/langgraph_agent.py", line 157, in _process_step
-
-LangGraph Error:     cursor.execute("""
-
-LangGraph Error: sqlite3.OperationalError: table node_executions has no column named commit_sha
-During task with name 'process_reasoning_step' and id 'bfcd86b0-78c5-880f-c1b5-805f0b2e8ee8'
-
-LangGraph processing completed with code 1
-Dashboard disconnected
-Error creating step commit: GitError: fatal: failed to resolve '' as a valid ref.
-
-    at Object.action (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1433:25)
-    at PluginStore.exec (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1482:29)
-    at /Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1901:43
-    at new Promise (<anonymous>)
-    at GitExecutorChain.handleTaskData (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1899:16)
-    at GitExecutorChain.attemptRemoteTask (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1886:42)
-    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
-    at async GitExecutorChain.attemptTask (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1858:18) {
-  task: {
-    commands: [
-      'notes',
-      '--ref=refs/notes/agent-steps',
-      'add',
-      '-f',
-      '-m',
-      '{\n  "alternatives": [\n    "Alternative A",\n    "Alternative B"\n  ]\n}',
-      ''
-    ],
-    format: 'utf-8',
-    parser: [Function: parser]
-  }
+Received pause request: {
+  event_id: '8da59721-1554-4983-9d69-14352203169f',
+  event_type: 'agent.pause_requested',
+  timestamp: '2025-11-23T09:43:44.471Z',
+  payload: {}
 }
-Failed to commit step 3: GitError: fatal: failed to resolve '' as a valid ref.
-
-    at Object.action (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1433:25)
-    at PluginStore.exec (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1482:29)
-    at /Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1901:43
-    at new Promise (<anonymous>)
-    at GitExecutorChain.handleTaskData (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1899:16)
-    at GitExecutorChain.attemptRemoteTask (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1886:42)
-    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
-    at async GitExecutorChain.attemptTask (/Users/shauryatiwari/Desktop/Agents Neural Mind map/cli/node_modules/simple-git/dist/cjs/index.js:1858:18) {
-  task: {
-    commands: [
-      'notes',
-      '--ref=refs/notes/agent-steps',
-      'add',
-      '-f',
-      '-m',
-      '{\n  "alternatives": [\n    "Alternative A",\n    "Alternative B"\n  ]\n}',
-      ''
-    ],
-    format: 'utf-8',
-    parser: [Function: parser]
-  }
+Received resume request: {
+  event_id: '8f86354b-4dc7-4d13-8606-a05588b4fc25',
+  event_type: 'agent.resume_requested',
+  timestamp: '2025-11-23T09:43:46.475Z',
+  payload: {}
 }
 Dashboard disconnected
 Dashboard connected
+Dashboard connected
+Dashboard connected
+Received pause request: {
+  event_id: '2ca6ac43-6027-4fc2-8fd7-917d585a7b13',
+  event_type: 'agent.pause_requested',
+  timestamp: '2025-11-23T09:49:52.052Z',
+  payload: {}
+}
+Received resume request: {
+  event_id: 'd62ef414-221d-4e58-8e1a-aa1fd47b0bca',
+  event_type: 'agent.resume_requested',
+  timestamp: '2025-11-23T09:49:57.050Z',
+  payload: {}
+}
+Dashboard disconnected

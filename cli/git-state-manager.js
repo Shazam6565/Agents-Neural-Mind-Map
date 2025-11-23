@@ -41,7 +41,7 @@ class GitStateManager {
             // Construct structured commit message
             const message = `Step ${stepNumber}: ${decision}\n\nStep-ID: ${stepId}\nThought: ${thought}\nFile: ${file}`;
 
-            const commitResult = await this.git.commit(message);
+            const commitResult = await this.git.commit(message, { '--allow-empty': null });
             const commitHash = commitResult.commit;
 
             // Store full metadata in git notes

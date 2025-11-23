@@ -14,7 +14,7 @@ socket.on('connect', () => {
 socket.on('agent-event', (message) => {
     const { event_type, payload } = message;
 
-    if (event_type === 'status.changed') {
+    if (event_type === 'agent.status_changed') {
         console.log(`✓ Status Changed: ${payload.status}`);
 
         if (payload.status === 'PAUSED') {
@@ -32,9 +32,9 @@ socket.on('agent-event', (message) => {
 
 function testPauseResume() {
     console.log('> Sending PAUSE request...');
-    socket.emit('state.pause_requested', {
+    socket.emit('agent.pause_requested', {
         event_id: uuidv4(),
-        event_type: 'state.pause_requested',
+        event_type: 'agent.pause_requested',
         timestamp: new Date().toISOString(),
         payload: {}
     });
@@ -42,9 +42,9 @@ function testPauseResume() {
 
 function sendResume() {
     console.log('> Sending RESUME request...');
-    socket.emit('state.resume_requested', {
+    socket.emit('agent.resume_requested', {
         event_id: uuidv4(),
-        event_type: 'state.resume_requested',
+        event_type: 'agent.resume_requested',
         timestamp: new Date().toISOString(),
         payload: {}
     });

@@ -5,6 +5,7 @@ class WebSocketProtocol {
         // Dashboard -> IDE
         ROLLBACK_REQUESTED: 'state.rollback_requested',
         PAUSE_REQUESTED: 'agent.pause_requested',
+        RESUME_REQUESTED: 'agent.resume_requested',
         BRANCH_REQUESTED: 'branch.create_requested',
 
         // IDE -> Dashboard

@@ -95,7 +95,7 @@ export default function Home() {
     });
 
     socket.on('agent-event', (message: any) => {
-      if (message.event_type === 'status.changed') {
+      if (message.event_type === 'agent.status_changed') {
         setAgentStatus(message.payload.status);
       }
     });

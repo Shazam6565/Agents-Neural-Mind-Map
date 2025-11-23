@@ -15,6 +15,8 @@ def init_database(db_path: str = "agent_mindmap.db"):
             parent_session_id TEXT,
             prompt TEXT,
             created_at DATETIME,
+            git_branch TEXT,
+            base_commit_sha TEXT,
             FOREIGN KEY(parent_session_id) REFERENCES sessions(session_id)
         )
     """)
@@ -30,6 +32,8 @@ def init_database(db_path: str = "agent_mindmap.db"):
             finished_at DATETIME,
             state_update_json TEXT,
             output_text TEXT,
+            commit_sha TEXT,
+            step_id TEXT,
             FOREIGN KEY(session_id) REFERENCES sessions(session_id),
             FOREIGN KEY(parent_node_id) REFERENCES node_executions(id)
         )
