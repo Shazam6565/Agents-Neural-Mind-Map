@@ -291,7 +291,7 @@ fs.watch(reasoningTracePath, (eventType) => {
                                         step.decision,
                                         step.thought,
                                         step.file_examined,
-                                        { alternatives: step.alternatives_considered }
+                                        step // Pass full step object as metadata
                                     );
                                     console.log(`✓ Committed step ${step.step}: ${commitHash}`);
 
@@ -304,13 +304,9 @@ fs.watch(reasoningTracePath, (eventType) => {
                                     `, [commitHash, stepId]);
                                     db.close();
 
-                                    // Emit event
+                                    // Emit event with full metadata
                                     const payload = {
-                                        step: step.step,
-                                        thought: step.thought,
-                                        file: step.file_examined,
-                                        decision: step.decision,
-                                        alternatives: step.alternatives_considered,
+                                        ...step, // Include all fields from step (node_type, status, etc.)
                                         commitHash: commitHash,
                                         stepId: stepId
                                     };
